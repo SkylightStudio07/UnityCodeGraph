@@ -8,36 +8,49 @@
   </head>
   <body>
     <main class="shell">
-      <section class="hero">
-        <div class="bubble bubble-a"></div>
-        <div class="bubble bubble-b"></div>
-        <div class="bubble bubble-c"></div>
-        <div class="globe"></div>
-        <div class="wave"></div>
-        <div class="brand">
-          <div class="mark"><span></span><span></span></div>
-          <div>
-            <h1>Unity Code Graph</h1>
-            <p>C# relationship scanner</p>
-          </div>
+      <div class="stage-lines" aria-hidden="true">
+        <span class="orbit orbit-a"></span>
+        <span class="orbit orbit-b"></span>
+        <span class="orbit orbit-c"></span>
+        <span class="slash slash-a"></span>
+        <span class="slash slash-b"></span>
+      </div>
+
+      <section class="hero" aria-label="Unity Code Graph launcher">
+        <div class="hero-fan" aria-hidden="true"></div>
+        <div class="hero-shadow" aria-hidden="true"></div>
+        <div class="star star-a" aria-hidden="true"></div>
+        <div class="star star-b" aria-hidden="true"></div>
+
+        <div class="wordmark-wrap">
+          <svg class="wordmark" viewBox="0 0 520 210" role="img" aria-label="Unity Code Graph">
+            <path class="wordmark-orbit" d="M40 154 C148 34 334 20 484 122" />
+            <path class="wordmark-orbit orbit-thin" d="M88 188 C186 82 334 54 466 84" />
+            <text class="wordmark-main wordmark-top" x="18" y="86">Unity</text>
+            <text class="wordmark-main wordmark-bottom" x="105" y="150">Code Graph</text>
+            <text class="wordmark-sub" x="238" y="178">C# relationship scanner</text>
+            <path class="wordmark-star" d="M76 93 C88 120 97 129 124 141 C97 153 88 162 76 189 C64 162 55 153 28 141 C55 129 64 120 76 93Z" />
+          </svg>
         </div>
-        <div class="status-card">
+
+        <div class="status-strip">
           <span id="statusPill">IDLE</span>
           <strong id="statusText">Ready to generate</strong>
-          <p>Scan local Unity projects or public Git repositories, then view the graph on the canvas.</p>
+          <p>Scan local projects, keep watch mode alive, then jump into the canvas.</p>
         </div>
       </section>
 
       <section class="workspace">
-        <header>
-          <div>
+        <header class="workspace-header">
+          <div class="header-copy">
+            <span class="kicker">System Command</span>
             <h2>Project Scanner</h2>
             <p>Choose a source, generate a graph, and keep it fresh while Unity scripts change.</p>
           </div>
-          <button id="openCanvas" class="glass-button">Open Canvas</button>
+          <button id="openCanvas" class="open-canvas">Open Canvas</button>
         </header>
 
-        <div class="panel">
+        <div class="panel scanner-panel">
           <label>
             <span>Project Folder</span>
             <div class="field-combo">

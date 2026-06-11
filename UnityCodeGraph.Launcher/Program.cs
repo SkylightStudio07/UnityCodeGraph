@@ -422,7 +422,7 @@ internal sealed class LauncherForm : Form
         var candidates = new[]
         {
             Path.Combine(AppContext.BaseDirectory, "UnityCodeGraph.exe"),
-            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "UnityCodeGraph", "bin", "Debug", "net10.0", "UnityCodeGraph.exe")),
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "UnityCodeGraph", "bin", "Debug", "net9.0", "UnityCodeGraph.exe")),
             Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "dist", "UnityCodeGraph-win-x64", "UnityCodeGraph.exe"))
         };
 

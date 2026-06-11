@@ -53,6 +53,7 @@ const state = {
   selectedSystemId: "",
   selectedEntry: "",
   flowDepth: 3,
+  pinView: false,
   transform: { x: 40, y: 40, scale: 1 },
   drag: null,
   pan: null
@@ -69,6 +70,7 @@ const els = {
   search: document.getElementById("searchInput"),
   file: document.getElementById("fileInput"),
   sample: document.getElementById("sampleButton"),
+  pinMode: document.getElementById("pinModeButton"),
   fit: document.getElementById("fitButton"),
   reset: document.getElementById("resetButton"),
   viewMode: document.getElementById("viewModeSelect"),
@@ -95,6 +97,7 @@ init();
 async function init() {
   bindEvents();
   await loadSampleGraph();
+  requestAnimationFrame(() => document.body.classList.add("graph-loaded"));
 }
 
 function bindEvents() {
@@ -111,6 +114,10 @@ function bindEvents() {
   });
 
   els.sample.addEventListener("click", loadSampleGraph);
+  els.pinMode.addEventListener("click", () => {
+    state.pinView = !state.pinView;
+    syncPinModeButton();
+  });
   els.fit.addEventListener("click", () => fitToView());
   els.reset.addEventListener("click", () => {
     state.search = "";
@@ -121,11 +128,13 @@ function bindEvents() {
     state.neighborhoodDepth = 2;
     state.neighborhoodDirection = "both";
     state.selectedSystemId = "";
+    state.pinView = false;
     els.viewMode.value = state.viewMode;
     els.group.value = state.groupBy;
     els.edgeMode.value = state.edgeMode;
     els.neighborhoodDepth.value = String(state.neighborhoodDepth);
     els.neighborhoodDirection.value = state.neighborhoodDirection;
+    syncPinModeButton();
     state.enabledKinds = new Set(state.edgeKinds);
     state.selected = null;
     relayout();
@@ -193,6 +202,7 @@ async function loadSampleGraph() {
 }
 
 function loadGraph(graph, label) {
+  document.body.classList.remove("graph-loaded");
   const normalized = {
     ...graph,
     Nodes: graph.Nodes ?? graph.nodes ?? [],
@@ -208,10 +218,13 @@ function loadGraph(graph, label) {
   state.positions = layout.positions;
   state.sections = layout.sections;
   state.selected = null;
+  state.pinView = false;
+  syncPinModeButton();
   els.subtitle.textContent = `${label} · ${normalized.Nodes.length} types · ${normalized.Edges.length} relationships`;
   renderFilters();
   renderSystems();
   render();
+  requestAnimationFrame(() => document.body.classList.add("graph-loaded"));
   requestAnimationFrame(() => fitToView());
 }
 
@@ -655,6 +668,7 @@ function renderEdges(edges) {
     path.dataset.edgeKey = edgeKey(edge);
     path.addEventListener("click", (event) => {
       event.stopPropagation();
+      if (state.pinView && state.selected) return;
       state.selected = { type: "edge", key: edgeKey(edge) };
       render();
     });
@@ -685,19 +699,13 @@ function renderNodes(nodes) {
       event.stopPropagation();
       const point = screenToWorld(event);
       state.drag = { id: node.Id, dx: point.x - position.x, dy: point.y - position.y };
-      state.selected = { type: "node", id: node.Id };
-      state.edgeMode = "selected";
-      els.edgeMode.value = state.edgeMode;
-      state.selectedEntry = "";
+      selectNodeForInteraction(node.Id);
       render();
     });
 
     group.addEventListener("click", (event) => {
       event.stopPropagation();
-      state.selected = { type: "node", id: node.Id };
-      state.edgeMode = "selected";
-      els.edgeMode.value = state.edgeMode;
-      state.selectedEntry = "";
+      selectNodeForInteraction(node.Id);
       render();
     });
 
@@ -1155,8 +1163,10 @@ function onWheel(event) {
 function onPointerDown(event) {
   state.pan = { x: event.clientX, y: event.clientY, startX: state.transform.x, startY: state.transform.y };
   els.svg.classList.add("is-panning");
-  state.selected = null;
-  render();
+  if (!state.pinView) {
+    state.selected = null;
+    render();
+  }
 }
 
 function onPointerMove(event) {
@@ -1178,6 +1188,20 @@ function onPointerUp() {
   state.drag = null;
   state.pan = null;
   els.svg.classList.remove("is-panning");
+}
+
+function selectNodeForInteraction(nodeId) {
+  if (state.pinView && state.selected) return;
+  state.selected = { type: "node", id: nodeId };
+  state.edgeMode = "selected";
+  els.edgeMode.value = state.edgeMode;
+  state.selectedEntry = "";
+}
+
+function syncPinModeButton() {
+  els.pinMode.classList.toggle("is-active", state.pinView);
+  els.pinMode.setAttribute("aria-pressed", String(state.pinView));
+  els.pinMode.textContent = state.pinView ? "Pinned" : "Pin View";
 }
 
 function screenToWorld(event) {

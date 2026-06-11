@@ -8,11 +8,21 @@
   </head>
   <body>
     <div class="app-shell">
+      <div class="viewer-stage" aria-hidden="true">
+        <span class="stage-orbit stage-orbit-a"></span>
+        <span class="stage-orbit stage-orbit-b"></span>
+        <span class="stage-slash stage-slash-a"></span>
+        <span class="stage-slash stage-slash-b"></span>
+      </div>
       <header class="topbar">
         <div class="brand">
-          <span class="brand-mark" aria-hidden="true"></span>
-          <div>
-            <h1>Unity Code Graph</h1>
+          <svg class="viewer-wordmark" viewBox="0 0 340 96" role="img" aria-label="Unity Code Graph">
+            <path class="viewer-wordmark-orbit" d="M22 68 C92 12 220 4 316 58" />
+            <text class="viewer-wordmark-main" x="10" y="44">Unity</text>
+            <text class="viewer-wordmark-main viewer-wordmark-bottom" x="70" y="76">Code Graph</text>
+            <path class="viewer-wordmark-star" d="M46 42 C53 56 60 63 76 70 C60 77 53 84 46 98 C39 84 32 77 16 70 C32 63 39 56 46 42Z" />
+          </svg>
+          <div class="brand-copy">
             <p id="graphSubtitle">Loading graph data</p>
           </div>
         </div>
@@ -22,6 +32,7 @@
             Load JSON
           </label>
           <button id="sampleButton" type="button" title="Reload sample graph">Sample</button>
+          <button id="pinModeButton" type="button" title="Keep the current relationship view while moving nodes" aria-pressed="false">Pin View</button>
           <button id="fitButton" type="button" title="Fit graph to view">Fit</button>
           <button id="resetButton" type="button" title="Reset filters and view">Reset</button>
         </div>
