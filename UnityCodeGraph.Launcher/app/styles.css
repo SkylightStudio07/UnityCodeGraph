@@ -1,0 +1,352 @@
+:root {
+  --ink: #102033;
+  --muted: #5a7188;
+  --blue: #0679d8;
+  --cyan: #18d1ff;
+  --aqua: #9ef3ff;
+  --green: #25b37e;
+  --danger: #e44c7a;
+  --glass: rgba(255, 255, 255, 0.58);
+  --edge: rgba(255, 255, 255, 0.72);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 960px;
+  min-height: 640px;
+  color: var(--ink);
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  background:
+    radial-gradient(circle at 16% 16%, rgba(255, 255, 255, 0.9), transparent 18%),
+    radial-gradient(circle at 82% 12%, rgba(180, 246, 255, 0.9), transparent 16%),
+    linear-gradient(180deg, #0066bc 0%, #19bff0 42%, #d7fff8 100%);
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 22px;
+  height: 100vh;
+  padding: 24px;
+}
+
+.hero,
+.workspace {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--edge);
+  border-radius: 24px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0.22));
+  box-shadow: 0 24px 70px rgba(0, 73, 130, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(18px) saturate(1.35);
+}
+
+.hero {
+  padding: 26px;
+  background:
+    linear-gradient(180deg, rgba(0, 95, 184, 0.48), rgba(56, 218, 236, 0.18)),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.16));
+}
+
+.workspace {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 18px;
+  padding: 24px;
+}
+
+.brand {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.mark {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 54px;
+  height: 54px;
+  padding: 8px;
+  border: 2px solid rgba(255, 255, 255, 0.94);
+  border-radius: 15px;
+  background: linear-gradient(145deg, #eaffff, #78e5ff);
+  box-shadow: inset 0 2px 8px rgba(255, 255, 255, 0.95), 0 12px 28px rgba(0, 65, 140, 0.28);
+}
+
+.mark span {
+  border-right: 2px solid #0f406f;
+  border-bottom: 2px solid #0f406f;
+}
+
+.brand h1 {
+  margin: 0;
+  color: white;
+  font-size: 25px;
+  letter-spacing: 0;
+  text-shadow: 0 2px 12px rgba(0, 50, 110, 0.35);
+}
+
+.brand p,
+header p,
+.status-card p {
+  margin: 3px 0 0;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.globe {
+  position: absolute;
+  right: -76px;
+  top: 78px;
+  width: 230px;
+  height: 230px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 28% 22%, rgba(255, 255, 255, 0.95), transparent 15%),
+    radial-gradient(circle at 62% 68%, rgba(0, 90, 170, 0.55), transparent 42%),
+    linear-gradient(135deg, rgba(150, 240, 255, 0.7), rgba(0, 103, 200, 0.76));
+  border: 2px solid rgba(255, 255, 255, 0.74);
+  box-shadow: inset -18px -24px 48px rgba(0, 54, 120, 0.28), 0 0 34px rgba(255, 255, 255, 0.6);
+}
+
+.bubble {
+  position: absolute;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.78);
+  background: radial-gradient(circle at 32% 26%, white, rgba(148, 235, 255, 0.18) 35%, rgba(255, 255, 255, 0.04));
+  box-shadow: inset 0 0 20px rgba(255, 255, 255, 0.55), 0 0 22px rgba(255, 255, 255, 0.35);
+}
+
+.bubble-a {
+  width: 86px;
+  height: 86px;
+  left: 44px;
+  top: 155px;
+}
+
+.bubble-b {
+  width: 42px;
+  height: 42px;
+  right: 58px;
+  top: 42px;
+}
+
+.bubble-c {
+  width: 28px;
+  height: 28px;
+  left: 176px;
+  bottom: 154px;
+}
+
+.wave {
+  position: absolute;
+  left: -48px;
+  right: -48px;
+  bottom: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border-top: 12px solid rgba(255, 255, 255, 0.78);
+  transform: rotate(-7deg);
+  filter: drop-shadow(0 8px 12px rgba(0, 96, 160, 0.2));
+}
+
+.status-card {
+  position: absolute;
+  z-index: 3;
+  left: 24px;
+  right: 24px;
+  bottom: 24px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(14px);
+}
+
+#statusPill {
+  display: inline-flex;
+  padding: 5px 10px;
+  border-radius: 999px;
+  color: white;
+  background: rgba(33, 89, 136, 0.86);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+#statusPill.running {
+  background: var(--green);
+}
+
+.status-card strong {
+  display: block;
+  margin-top: 12px;
+  color: white;
+  font-size: 18px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+header h2 {
+  margin: 0;
+  font-size: 29px;
+  letter-spacing: 0;
+}
+
+header p {
+  color: var(--muted);
+}
+
+.panel,
+.log-panel {
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 12px 34px rgba(0, 91, 160, 0.12);
+  backdrop-filter: blur(18px);
+}
+
+.panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+label {
+  display: grid;
+  gap: 7px;
+}
+
+label span,
+.log-head span {
+  color: #164263;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.field-combo {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 9px;
+}
+
+.grid-two {
+  display: grid;
+  grid-template-columns: 0.42fr 0.58fr;
+  gap: 12px;
+}
+
+input {
+  width: 100%;
+  height: 40px;
+  border: 1px solid rgba(117, 190, 226, 0.65);
+  border-radius: 13px;
+  padding: 0 13px;
+  color: var(--ink);
+  outline: none;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: inset 0 1px 2px rgba(0, 70, 130, 0.08);
+}
+
+input:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 4px rgba(24, 209, 255, 0.22);
+}
+
+button {
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 13px;
+  padding: 0 16px;
+  color: #0d3250;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(214, 244, 255, 0.66));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 1), 0 8px 18px rgba(0, 95, 160, 0.14);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+button:hover {
+  filter: brightness(1.04);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.primary,
+.success,
+.danger {
+  color: white;
+}
+
+.primary {
+  background: linear-gradient(180deg, #1bc8ff, #0679d8);
+}
+
+.success {
+  background: linear-gradient(180deg, #47db9f, #12916c);
+}
+
+.danger {
+  background: linear-gradient(180deg, #ff7aa0, #cf2c60);
+}
+
+.glass-button {
+  min-width: 128px;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+}
+
+.log-panel {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+  padding: 16px;
+}
+
+.log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+#clearLog {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 10px;
+}
+
+#log {
+  margin: 0;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid rgba(103, 183, 224, 0.55);
+  border-radius: 14px;
+  padding: 13px;
+  color: #0e3754;
+  background: rgba(238, 251, 255, 0.68);
+  font: 13px Consolas, "Cascadia Mono", monospace;
+  white-space: pre-wrap;
+}

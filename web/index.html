@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Unity Code Graph</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <h1>Unity Code Graph</h1>
+            <p id="graphSubtitle">Loading graph data</p>
+          </div>
+        </div>
+        <div class="toolbar" aria-label="Graph controls">
+          <label class="file-button" title="Load graph JSON">
+            <input id="fileInput" type="file" accept="application/json,.json" />
+            Load JSON
+          </label>
+          <button id="sampleButton" type="button" title="Reload sample graph">Sample</button>
+          <button id="fitButton" type="button" title="Fit graph to view">Fit</button>
+          <button id="resetButton" type="button" title="Reset filters and view">Reset</button>
+        </div>
+      </header>
+
+      <aside class="left-panel">
+        <section class="panel-section">
+          <h2>Find</h2>
+          <input id="searchInput" class="search-input" type="search" placeholder="Type or namespace" />
+        </section>
+
+        <section class="panel-section">
+          <h2>Systems</h2>
+          <div id="systemList" class="system-list"></div>
+        </section>
+
+        <section class="panel-section">
+          <h2>Layout</h2>
+          <div class="control-stack">
+            <label>
+              <span>Group by</span>
+              <select id="groupSelect">
+                <option value="namespace">Namespace</option>
+                <option value="folder">Folder</option>
+                <option value="kind">Type kind</option>
+                <option value="unity">Unity / Plain</option>
+              </select>
+            </label>
+            <label>
+              <span>Edges</span>
+              <select id="edgeModeSelect">
+                <option value="all">All visible</option>
+                <option value="selected">Selected neighborhood</option>
+                <option value="structural" selected>Structural only</option>
+              </select>
+            </label>
+            <div class="split-controls">
+              <label>
+                <span>Depth</span>
+                <select id="neighborhoodDepthSelect">
+                  <option value="1">1</option>
+                  <option value="2" selected>2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                </select>
+              </label>
+              <label>
+                <span>Direction</span>
+                <select id="neighborhoodDirectionSelect">
+                  <option value="out">Out</option>
+                  <option value="in">In</option>
+                  <option value="both" selected>Both</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <h2>Edge Types</h2>
+          <div id="edgeFilters" class="filter-list"></div>
+        </section>
+
+        <section class="panel-section">
+          <h2>Stats</h2>
+          <dl class="stats">
+            <div><dt>Types</dt><dd id="nodeCount">0</dd></div>
+            <div><dt>Edges</dt><dd id="edgeCount">0</dd></div>
+            <div><dt>Unity</dt><dd id="unityCount">0</dd></div>
+          </dl>
+        </section>
+      </aside>
+
+      <main class="canvas-wrap">
+        <svg id="graphCanvas" role="img" aria-label="C# relationship graph">
+          <defs>
+            <marker id="arrowDefault" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z"></path>
+            </marker>
+          </defs>
+          <g id="viewport">
+            <g id="edgesLayer"></g>
+            <g id="nodesLayer"></g>
+          </g>
+        </svg>
+        <div id="emptyState" class="empty-state" hidden>No matching nodes</div>
+      </main>
+
+      <aside class="right-panel">
+        <section class="detail-card">
+          <h2 id="detailTitle">No Selection</h2>
+          <p id="detailSubtitle">Select a type or relationship on the canvas.</p>
+          <dl id="detailList" class="detail-list"></dl>
+        </section>
+
+        <section class="detail-card">
+          <h2>Examples</h2>
+          <div id="exampleList" class="examples"></div>
+        </section>
+
+        <section class="detail-card">
+          <h2>Flow Trace</h2>
+          <div class="flow-controls">
+            <select id="entrySelect"></select>
+            <select id="flowDepthSelect">
+              <option value="2">Depth 2</option>
+              <option value="3" selected>Depth 3</option>
+              <option value="4">Depth 4</option>
+              <option value="5">Depth 5</option>
+            </select>
+          </div>
+          <div id="flowList" class="flow-list"></div>
+        </section>
+      </aside>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

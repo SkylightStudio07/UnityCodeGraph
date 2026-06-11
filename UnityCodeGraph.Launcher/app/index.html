@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Unity Code Graph</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div class="bubble bubble-a"></div>
+        <div class="bubble bubble-b"></div>
+        <div class="bubble bubble-c"></div>
+        <div class="globe"></div>
+        <div class="wave"></div>
+        <div class="brand">
+          <div class="mark"><span></span><span></span></div>
+          <div>
+            <h1>Unity Code Graph</h1>
+            <p>C# relationship scanner</p>
+          </div>
+        </div>
+        <div class="status-card">
+          <span id="statusPill">IDLE</span>
+          <strong id="statusText">Ready to generate</strong>
+          <p>Scan local Unity projects or public Git repositories, then view the graph on the canvas.</p>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <header>
+          <div>
+            <h2>Project Scanner</h2>
+            <p>Choose a source, generate a graph, and keep it fresh while Unity scripts change.</p>
+          </div>
+          <button id="openCanvas" class="glass-button">Open Canvas</button>
+        </header>
+
+        <div class="panel">
+          <label>
+            <span>Project Folder</span>
+            <div class="field-combo">
+              <input id="projectPath" placeholder="Choose a Unity project folder" />
+              <button id="browse">Browse</button>
+            </div>
+          </label>
+
+          <label>
+            <span>Git Repository</span>
+            <div class="field-combo">
+              <input id="gitUrl" placeholder="https://github.com/user/repo.git" />
+              <button id="clone">Clone</button>
+            </div>
+          </label>
+
+          <div class="grid-two">
+            <label>
+              <span>Code Folders</span>
+              <input id="roots" value="Scripts,Source" />
+            </label>
+            <label>
+              <span>Output JSON</span>
+              <input id="outputPath" value="code-graph.json" />
+            </label>
+          </div>
+
+          <div class="actions">
+            <button id="generate" class="primary">Generate Once</button>
+            <button id="watch" class="success">Start Watch</button>
+            <button id="stop" class="danger" disabled>Stop</button>
+          </div>
+        </div>
+
+        <div class="log-panel">
+          <div class="log-head">
+            <span>Activity</span>
+            <button id="clearLog">Clear</button>
+          </div>
+          <pre id="log"></pre>
+        </div>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

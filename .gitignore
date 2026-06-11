@@ -1,0 +1,10 @@
+bin/
+obj/
+dist/
+*.user
+*.suo
+*.json
+*.log
+!package.json
+!package-lock.json
+!tsconfig.json
