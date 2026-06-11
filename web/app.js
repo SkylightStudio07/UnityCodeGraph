@@ -6,6 +6,10 @@ const SECTION_PADDING = 24;
 const SECTION_HEADER = 54;
 const SECTION_GAP = 46;
 const SECTION_ROW_WIDTH = 3200;
+const SYSTEM_WIDTH = 260;
+const SYSTEM_HEIGHT = 132;
+const SYSTEM_GAP_X = 80;
+const SYSTEM_GAP_Y = 70;
 const SAMPLE_URL = "../samples/mini-graph.json";
 
 const sampleGraph = {
@@ -41,8 +45,9 @@ const state = {
   enabledKinds: new Set(),
   selected: null,
   search: "",
+  viewMode: "type",
   groupBy: "namespace",
-  edgeMode: "structural",
+  edgeMode: "focused",
   neighborhoodDepth: 2,
   neighborhoodDirection: "both",
   selectedSystemId: "",
@@ -66,6 +71,7 @@ const els = {
   sample: document.getElementById("sampleButton"),
   fit: document.getElementById("fitButton"),
   reset: document.getElementById("resetButton"),
+  viewMode: document.getElementById("viewModeSelect"),
   group: document.getElementById("groupSelect"),
   edgeMode: document.getElementById("edgeModeSelect"),
   neighborhoodDepth: document.getElementById("neighborhoodDepthSelect"),
@@ -109,11 +115,13 @@ function bindEvents() {
   els.reset.addEventListener("click", () => {
     state.search = "";
     els.search.value = "";
+    state.viewMode = "type";
     state.groupBy = "namespace";
-    state.edgeMode = "structural";
+    state.edgeMode = "focused";
     state.neighborhoodDepth = 2;
     state.neighborhoodDirection = "both";
     state.selectedSystemId = "";
+    els.viewMode.value = state.viewMode;
     els.group.value = state.groupBy;
     els.edgeMode.value = state.edgeMode;
     els.neighborhoodDepth.value = String(state.neighborhoodDepth);
@@ -123,6 +131,15 @@ function bindEvents() {
     relayout();
     fitToView();
     render();
+  });
+
+  els.viewMode.addEventListener("change", () => {
+    state.viewMode = els.viewMode.value;
+    state.selected = null;
+    state.selectedEntry = "";
+    relayout();
+    render();
+    fitToView();
   });
 
   els.group.addEventListener("change", () => {
@@ -366,6 +383,11 @@ function renderSystems() {
 
 function render() {
   if (!state.graph) return;
+  if (state.viewMode === "system") {
+    renderSystemView();
+    return;
+  }
+
   const visibleNodes = getVisibleNodes();
   const visibleIds = new Set(visibleNodes.map(node => node.Id));
   const visibleEdges = filterEdges(state.graph.Edges.filter(edge =>
@@ -382,6 +404,128 @@ function render() {
   renderEdges(visibleEdges);
   renderNodes(visibleNodes);
   renderDetails();
+}
+
+function renderSystemView() {
+  const clusters = filteredSystemClusters();
+  const positions = layoutSystems(clusters);
+  const edges = buildSystemEdges(clusters);
+
+  els.nodeCount.textContent = clusters.length;
+  els.edgeCount.textContent = edges.length;
+  els.unityCount.textContent = "-";
+  els.empty.hidden = clusters.length > 0;
+
+  applyTransform();
+  clearSections();
+  renderSystemEdges(edges, positions);
+  renderSystemNodes(clusters, positions);
+  renderDetails();
+}
+
+function filteredSystemClusters() {
+  const clusters = state.graph.SystemClusters ?? [];
+  if (!state.search) return clusters;
+  return clusters.filter(cluster =>
+    cluster.Name.toLowerCase().includes(state.search) ||
+    String(cluster.Id).toLowerCase().includes(state.search) ||
+    (cluster.Keywords ?? []).some(keyword => String(keyword).toLowerCase().includes(state.search))
+  );
+}
+
+function layoutSystems(clusters) {
+  const positions = new Map();
+  const columns = Math.max(1, Math.ceil(Math.sqrt(clusters.length * 1.6)));
+  clusters.forEach((cluster, index) => {
+    const col = index % columns;
+    const row = Math.floor(index / columns);
+    positions.set(cluster.Id, {
+      x: col * (SYSTEM_WIDTH + SYSTEM_GAP_X),
+      y: row * (SYSTEM_HEIGHT + SYSTEM_GAP_Y)
+    });
+  });
+  return positions;
+}
+
+function buildSystemEdges(clusters) {
+  const clusterByNode = new Map();
+  for (const cluster of clusters) {
+    for (const nodeId of cluster.NodeIds ?? []) {
+      clusterByNode.set(nodeId, cluster.Id);
+    }
+  }
+
+  const edges = new Map();
+  for (const edge of state.graph.Edges) {
+    const source = clusterByNode.get(edge.Source);
+    const target = clusterByNode.get(edge.Target);
+    if (!source || !target || source === target) continue;
+    const key = `${source}|${target}`;
+    const current = edges.get(key) ?? { Source: source, Target: target, Weight: 0, Kinds: new Set() };
+    current.Weight += edge.Weight ?? 1;
+    current.Kinds.add(edge.Kind);
+    edges.set(key, current);
+  }
+
+  return [...edges.values()]
+    .sort((a, b) => b.Weight - a.Weight || a.Source.localeCompare(b.Source));
+}
+
+function renderSystemEdges(edges, positions) {
+  els.edges.innerHTML = "";
+  const selectedId = state.selected?.type === "system" ? state.selected.id : "";
+  const visibleEdges = selectedId
+    ? edges.filter(edge => edge.Source === selectedId || edge.Target === selectedId)
+    : state.edgeMode === "all" ? edges : [];
+
+  for (const edge of visibleEdges) {
+    const source = systemCenter(edge.Source, positions);
+    const target = systemCenter(edge.Target, positions);
+    if (!source || !target) continue;
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("class", `edge system-edge ${selectedId ? "is-selected" : ""}`);
+    path.setAttribute("d", edgePath(source, target, { Source: edge.Source, Target: edge.Target, Kind: "system" }));
+    path.dataset.edgeKey = `${edge.Source}|${edge.Target}|system`;
+    els.edges.appendChild(path);
+  }
+}
+
+function renderSystemNodes(clusters, positions) {
+  els.nodes.innerHTML = "";
+  for (const cluster of clusters) {
+    const p = positions.get(cluster.Id) ?? { x: 0, y: 0 };
+    const selected = state.selected?.type === "system" && state.selected.id === cluster.Id;
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.setAttribute("class", `system-node ${selected ? "is-selected" : ""}`);
+    group.setAttribute("transform", `translate(${p.x}, ${p.y})`);
+    group.dataset.systemId = cluster.Id;
+    group.innerHTML = `
+      <rect class="system-node-rect" width="${SYSTEM_WIDTH}" height="${SYSTEM_HEIGHT}" rx="8"></rect>
+      <text class="system-node-title" x="16" y="30">${escapeHtml(cluster.Name)}</text>
+      <text class="system-node-subtitle" x="16" y="54">${cluster.NodeIds?.length ?? 0} types / ${cluster.InternalEdges ?? 0} internal edges</text>
+      <text class="system-node-subtitle" x="16" y="76">${cluster.ExternalEdges ?? 0} external refs / score ${cluster.Score ?? 0}</text>
+      <text class="system-node-keywords" x="16" y="106">${escapeHtml((cluster.Keywords ?? []).slice(0, 4).join(", "))}</text>
+    `;
+    group.addEventListener("click", (event) => {
+      event.stopPropagation();
+      state.selectedSystemId = cluster.Id;
+      state.selected = { type: "system", id: cluster.Id };
+      renderSystems();
+      render();
+    });
+    els.nodes.appendChild(group);
+  }
+}
+
+function systemCenter(id, positions) {
+  const p = positions.get(id);
+  if (!p) return null;
+  return { x: p.x + SYSTEM_WIDTH / 2, y: p.y + SYSTEM_HEIGHT / 2 };
+}
+
+function clearSections() {
+  const layer = document.getElementById("sectionsLayer");
+  if (layer) layer.innerHTML = "";
 }
 
 function getVisibleNodes() {
@@ -404,6 +548,18 @@ function getVisibleNodes() {
 }
 
 function filterEdges(edges) {
+  if (state.edgeMode === "focused") {
+    if (state.selected?.type === "node") {
+      const id = state.selected.id;
+      return edges.filter(edge => edge.Source === id || edge.Target === id);
+    }
+    if (state.selected?.type === "system") {
+      const system = selectedSystem();
+      const ids = new Set(system?.NodeIds ?? []);
+      return edges.filter(edge => ids.has(edge.Source) && ids.has(edge.Target));
+    }
+    return [];
+  }
   if (state.edgeMode === "structural") {
     const structural = new Set(["inherits", "implements", "has_field_type", "has_property_type", "has_event_type"]);
     return edges.filter(edge => structural.has(edge.Kind));
@@ -949,15 +1105,21 @@ function renderExamples(examples) {
 }
 
 function fitToView() {
-  const nodes = getVisibleNodes();
-  if (!nodes.length) return;
-  const bounds = nodes.reduce((box, node) => {
-    const p = state.positions.get(node.Id) ?? { x: 0, y: 0 };
+  const items = state.viewMode === "system"
+    ? filteredSystemClusters().map(cluster => ({ id: cluster.Id, width: SYSTEM_WIDTH, height: SYSTEM_HEIGHT }))
+    : getVisibleNodes().map(node => ({ id: node.Id, width: NODE_WIDTH, height: NODE_HEIGHT }));
+  const positions = state.viewMode === "system"
+    ? layoutSystems(filteredSystemClusters())
+    : state.positions;
+
+  if (!items.length) return;
+  const bounds = items.reduce((box, item) => {
+    const p = positions.get(item.id) ?? { x: 0, y: 0 };
     return {
       minX: Math.min(box.minX, p.x),
       minY: Math.min(box.minY, p.y),
-      maxX: Math.max(box.maxX, p.x + NODE_WIDTH),
-      maxY: Math.max(box.maxY, p.y + NODE_HEIGHT)
+      maxX: Math.max(box.maxX, p.x + item.width),
+      maxY: Math.max(box.maxY, p.y + item.height)
     };
   }, { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
 

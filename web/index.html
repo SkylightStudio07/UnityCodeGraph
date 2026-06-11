@@ -42,6 +42,13 @@
           <h2>Layout</h2>
           <div class="control-stack">
             <label>
+              <span>View</span>
+              <select id="viewModeSelect">
+                <option value="type" selected>Type View</option>
+                <option value="system">System View</option>
+              </select>
+            </label>
+            <label>
               <span>Group by</span>
               <select id="groupSelect">
                 <option value="namespace">Namespace</option>
@@ -53,9 +60,10 @@
             <label>
               <span>Edges</span>
               <select id="edgeModeSelect">
+                <option value="focused" selected>Focused only</option>
                 <option value="all">All visible</option>
                 <option value="selected">Selected neighborhood</option>
-                <option value="structural" selected>Structural only</option>
+                <option value="structural">Structural only</option>
               </select>
             </label>
             <div class="split-controls">

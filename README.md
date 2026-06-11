@@ -94,6 +94,14 @@ map generation, and UI areas. Selecting a system filters the canvas to that
 cluster and shows a local `System Report` with likely role, major types, entry
 candidates, likely static flows, and external touchpoints.
 
+The canvas has two graph modes:
+
+- `Type View` lays out types in grid-backed sections. Edges default to focused
+  mode, so the graph starts quiet and highlights relationships when a type or
+  system is selected.
+- `System View` collapses type relationships into system cards and draws
+  system-to-system touchpoints separately.
+
 ## Extracted Relationships
 
 - `inherits`
