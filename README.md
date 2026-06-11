@@ -89,6 +89,11 @@ Open `http://localhost:5173/web/`.
 The canvas can also load any generated graph file through the `Load JSON`
 button.
 
+The left `Systems` panel shows first-pass system clusters such as card, battle,
+map generation, and UI areas. Selecting a system filters the canvas to that
+cluster and shows a local `System Report` with likely role, major types, entry
+candidates, likely static flows, and external touchpoints.
+
 ## Extracted Relationships
 
 - `inherits`

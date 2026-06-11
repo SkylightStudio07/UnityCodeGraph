@@ -468,6 +468,64 @@ marker path {
   font-size: 11px;
 }
 
+.system-report {
+  display: grid;
+  gap: 14px;
+}
+
+.system-report section {
+  display: grid;
+  gap: 8px;
+}
+
+.system-report h3 {
+  margin: 0;
+  color: #2d3742;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.system-report p {
+  margin: 0;
+  color: #42505b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.report-row,
+.report-flow {
+  padding: 10px;
+  border: 1px solid #e0e5e9;
+  border-radius: 7px;
+  background: #fbfcfd;
+}
+
+.report-row strong,
+.report-flow strong {
+  display: block;
+  color: #17202a;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.report-row span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.report-flow ol {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: #42505b;
+  font-size: 11px;
+}
+
 .empty-state {
   position: absolute;
   left: 50%;

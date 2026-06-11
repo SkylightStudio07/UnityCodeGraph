@@ -76,6 +76,7 @@ const els = {
   detailTitle: document.getElementById("detailTitle"),
   detailSubtitle: document.getElementById("detailSubtitle"),
   detailList: document.getElementById("detailList"),
+  secondaryTitle: document.getElementById("secondaryTitle"),
   examples: document.getElementById("exampleList"),
   entrySelect: document.getElementById("entrySelect"),
   flowDepth: document.getElementById("flowDepthSelect"),
@@ -553,6 +554,7 @@ function renderDetails() {
     els.detailTitle.textContent = "No Selection";
     els.detailSubtitle.textContent = "Select a type or relationship on the canvas.";
     els.detailList.innerHTML = "";
+    els.secondaryTitle.textContent = "Examples";
     els.examples.innerHTML = "";
     renderFlowTrace();
     return;
@@ -571,7 +573,8 @@ function renderDetails() {
       ["Keywords", (cluster.Keywords ?? []).join(", ") || "-"],
       ["Entry Candidates", (cluster.EntryMethodIds ?? []).length]
     ]);
-    els.examples.innerHTML = systemEntriesHtml(cluster);
+    els.secondaryTitle.textContent = "System Report";
+    els.examples.innerHTML = systemReportHtml(cluster);
     renderFlowTrace();
     return;
   }
@@ -593,6 +596,7 @@ function renderDetails() {
       ["Degree", `${outgoing} out · ${incoming} in`]
     ]);
     appendDetailRow("Neighborhood", neighborhood ? `${neighborhood.size} types / depth ${state.neighborhoodDepth} / ${state.neighborhoodDirection}` : "-");
+    els.secondaryTitle.textContent = "Examples";
     els.examples.innerHTML = "";
     renderFlowTrace(node.Id);
     return;
@@ -608,6 +612,7 @@ function renderDetails() {
     ["Weight", edge.Weight],
     ["Kind", edge.Kind]
   ]);
+  els.secondaryTitle.textContent = "Examples";
   renderExamples(edge.Examples ?? []);
   renderFlowTrace();
 }
@@ -634,6 +639,190 @@ function systemEntriesHtml(cluster) {
       <code>${escapeHtml(method.TypeId.split(".").pop())}.${escapeHtml(method.Signature)}</code>
     </div>
   `).join("");
+}
+
+function systemReportHtml(cluster) {
+  const report = buildSystemReport(cluster);
+  return `
+    <div class="system-report">
+      <section>
+        <h3>Role Estimate</h3>
+        <p>${escapeHtml(report.role)}</p>
+      </section>
+      <section>
+        <h3>Main Types</h3>
+        ${report.mainTypes.length ? report.mainTypes.map(item => `
+          <div class="report-row">
+            <strong>${escapeHtml(item.name)}</strong>
+            <span>${escapeHtml(item.detail)}</span>
+          </div>
+        `).join("") : "<p class=\"muted-text\">No major types detected.</p>"}
+      </section>
+      <section>
+        <h3>Entry Candidates</h3>
+        ${report.entries.length ? report.entries.map(entry => `
+          <div class="report-row">
+            <strong>${escapeHtml(entry.name)}</strong>
+            <span>${escapeHtml(entry.detail)}</span>
+          </div>
+        `).join("") : "<p class=\"muted-text\">No entry candidates detected.</p>"}
+      </section>
+      <section>
+        <h3>Likely Flows</h3>
+        ${report.flows.length ? report.flows.map(flow => `
+          <div class="report-flow">
+            <strong>${escapeHtml(flow.entry)}</strong>
+            <ol>${flow.steps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol>
+          </div>
+        `).join("") : "<p class=\"muted-text\">No internal method flow detected.</p>"}
+      </section>
+      <section>
+        <h3>External Touchpoints</h3>
+        ${report.external.length ? report.external.map(item => `
+          <div class="report-row">
+            <strong>${escapeHtml(item.name)}</strong>
+            <span>${escapeHtml(item.detail)}</span>
+          </div>
+        `).join("") : "<p class=\"muted-text\">No external type touchpoints detected.</p>"}
+      </section>
+    </div>
+  `;
+}
+
+function buildSystemReport(cluster) {
+  const nodes = state.graph?.Nodes ?? [];
+  const edges = state.graph?.Edges ?? [];
+  const methods = state.graph?.Methods ?? [];
+  const methodEdges = state.graph?.MethodEdges ?? [];
+  const nodeById = new Map(nodes.map(node => [node.Id, node]));
+  const methodById = new Map(methods.map(method => [method.Id, method]));
+  const clusterIds = new Set(cluster.NodeIds ?? []);
+  const clusterNodes = [...clusterIds].map(id => nodeById.get(id)).filter(Boolean);
+
+  const degree = new Map(clusterNodes.map(node => [node.Id, { in: 0, out: 0, internal: 0, external: 0 }]));
+  const external = new Map();
+  for (const edge of edges) {
+    const sourceIn = clusterIds.has(edge.Source);
+    const targetIn = clusterIds.has(edge.Target);
+    if (!sourceIn && !targetIn) continue;
+
+    if (sourceIn) {
+      const item = degree.get(edge.Source);
+      if (item) {
+        item.out += edge.Weight ?? 1;
+        if (targetIn) item.internal += edge.Weight ?? 1;
+        else item.external += edge.Weight ?? 1;
+      }
+    }
+    if (targetIn) {
+      const item = degree.get(edge.Target);
+      if (item) {
+        item.in += edge.Weight ?? 1;
+        if (sourceIn) item.internal += edge.Weight ?? 1;
+        else item.external += edge.Weight ?? 1;
+      }
+    }
+    if (sourceIn !== targetIn) {
+      const outsideId = sourceIn ? edge.Target : edge.Source;
+      const outsideNode = nodeById.get(outsideId);
+      if (outsideNode) {
+        const current = external.get(outsideId) ?? { node: outsideNode, weight: 0, kinds: new Set() };
+        current.weight += edge.Weight ?? 1;
+        current.kinds.add(edge.Kind);
+        external.set(outsideId, current);
+      }
+    }
+  }
+
+  const mainTypes = clusterNodes
+    .map(node => ({ node, stat: degree.get(node.Id) ?? { in: 0, out: 0, internal: 0, external: 0 } }))
+    .sort((a, b) =>
+      (b.stat.internal + b.stat.external + b.stat.in + b.stat.out) -
+      (a.stat.internal + a.stat.external + a.stat.in + a.stat.out) ||
+      a.node.Name.localeCompare(b.node.Name)
+    )
+    .slice(0, 8)
+    .map(item => ({
+      name: item.node.Name,
+      detail: `${item.node.Kind}${item.node.IsUnityType ? " / Unity" : ""} / ${item.stat.out} out / ${item.stat.in} in`
+    }));
+
+  const entries = (cluster.EntryMethodIds ?? [])
+    .map(id => methodById.get(id))
+    .filter(Boolean)
+    .slice(0, 8)
+    .map(method => ({
+      name: methodLabel(method),
+      detail: `${method.EntryKind || "candidate"} / ${shortFile(method.File)}:${method.Line}`
+    }));
+
+  const outgoingMethods = new Map();
+  for (const edge of methodEdges) {
+    const source = methodById.get(edge.Source);
+    const target = methodById.get(edge.Target);
+    if (!source || !target) continue;
+    if (!clusterIds.has(source.TypeId) || !clusterIds.has(target.TypeId)) continue;
+    if (!outgoingMethods.has(edge.Source)) outgoingMethods.set(edge.Source, []);
+    outgoingMethods.get(edge.Source).push(edge);
+  }
+
+  const flows = (cluster.EntryMethodIds ?? [])
+    .map(id => methodById.get(id))
+    .filter(Boolean)
+    .slice(0, 4)
+    .map(method => summarizeFlow(method, outgoingMethods, methodById))
+    .filter(flow => flow.steps.length);
+
+  return {
+    role: roleEstimate(cluster, clusterNodes),
+    mainTypes,
+    entries,
+    flows,
+    external: [...external.values()]
+      .sort((a, b) => b.weight - a.weight || a.node.Name.localeCompare(b.node.Name))
+      .slice(0, 8)
+      .map(item => ({
+        name: item.node.Name,
+        detail: `${item.weight} refs / ${[...item.kinds].map(formatKind).join(", ")}`
+      }))
+  };
+}
+
+function roleEstimate(cluster, nodes) {
+  const keywords = (cluster.Keywords ?? []).slice(0, 5);
+  const unityCount = nodes.filter(node => node.IsUnityType).length;
+  const plainCount = Math.max(0, nodes.length - unityCount);
+  const density = cluster.InternalEdges > cluster.ExternalEdges ? "internally dense" : "externally connected";
+  const unityText = unityCount ? `${unityCount} Unity-facing types` : `${plainCount} plain C# types`;
+  return `${cluster.Name} appears to be an ${density} area around ${keywords.join(", ") || "shared code"}. It contains ${nodes.length} types, including ${unityText}.`;
+}
+
+function summarizeFlow(entry, outgoing, byId) {
+  const steps = [];
+  const seen = new Set();
+  let current = entry;
+  for (let depth = 0; depth < 6; depth++) {
+    if (!current || seen.has(current.Id)) {
+      if (current) steps.push(`${methodLabel(current)} / cycle`);
+      break;
+    }
+    seen.add(current.Id);
+    const nextEdges = (outgoing.get(current.Id) ?? [])
+      .sort((a, b) => (b.Weight ?? 1) - (a.Weight ?? 1) || (byId.get(a.Target)?.Line ?? 0) - (byId.get(b.Target)?.Line ?? 0));
+    const status = nextEdges.length ? "" : " / terminal";
+    steps.push(`${methodLabel(current)}${status}`);
+    current = nextEdges.length ? byId.get(nextEdges[0].Target) : null;
+  }
+  if (current && steps.length >= 6) steps.push("continues...");
+  return { entry: methodLabel(entry), steps };
+}
+
+function methodLabel(method) {
+  return `${method.TypeId.split(".").pop()}.${method.Signature}`;
+}
+
+function shortFile(file) {
+  return String(file ?? "").replaceAll("\\", "/").split("/").slice(-2).join("/");
 }
 
 function renderFlowTrace(typeId = state.selected?.type === "node" ? state.selected.id : "") {
