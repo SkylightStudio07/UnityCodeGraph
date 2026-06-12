@@ -1,33 +1,161 @@
-# Unity C# Code Graph
+# Unity Code Graph
 
-First-pass parser for visualizing relationships between Unity/C# source files.
+[Korean README](README.ko.md)
 
-The current MVP scans `.cs` files and emits a JSON graph with type nodes and
-relationships that can later be consumed by a web canvas.
+Unity Code Graph scans Unity/C# source files and turns type relationships,
+method calls, Unity-specific references, and likely system clusters into an
+interactive graph viewer.
 
-## Run
+It is designed as a local-first inspection tool: no AI, no project upload, and
+no Unity editor integration required. The analyzer reads `.cs` files with
+Roslyn syntax trees and emits JSON that the included web viewer can load.
+
+![Launcher](docs/screenshots/launcher.png)
+
+![Web Viewer](docs/screenshots/web-viewer.png)
+
+## Features
+
+- Scan local Unity projects or plain C# folders.
+- Generate a JSON graph from classes, structs, records, interfaces, and enums.
+- Track type relationships such as inheritance, fields, properties, parameters,
+  local variables, object creation, casts, type checks, and attributes.
+- Detect Unity-style references such as `GetComponent<T>()`, `AddComponent<T>()`,
+  `FindObjectOfType<T>()`, and `ScriptableObject.CreateInstance<T>()`.
+- Build a method call graph for calls that can be resolved from local syntax.
+- Show system clusters, system reports, flow traces, and per-node code call
+  summaries in the web viewer.
+- Save graph layout locally, then export/import layout JSON between browsers or
+  machines.
+- Use the WebView2 launcher to generate graphs, watch for changes, and open the
+  canvas with the latest output file.
+
+## Requirements
+
+- Windows
+- .NET 9 SDK
+- WebView2 Runtime for the launcher
+- Node.js for the shortcut JavaScript syntax checks and optional static server
+
+## Quick Start
+
+Build everything and run syntax checks:
 
 ```powershell
-dotnet run --project .\UnityCodeGraph -- <path-to-unity-project-or-folder> --output graph.json
+.\build.bat
 ```
 
-To scan only common Unity code folders under a project root:
+Generate a graph from a Unity project:
 
 ```powershell
 dotnet run --project .\UnityCodeGraph -- <path-to-unity-project> --roots Scripts,Source --output graph.json
 ```
 
-You can also pass the code folder directly:
+Generate from a direct code folder:
 
 ```powershell
 dotnet run --project .\UnityCodeGraph -- <path-to-unity-project>\Assets\Scripts --output graph.json
 ```
 
-For live Unity development, keep the parser running and regenerate the graph
-whenever `.cs` files are added, changed, deleted, or renamed:
+Watch a project and regenerate when `.cs` files change:
 
 ```powershell
 dotnet run --project .\UnityCodeGraph -- <path-to-unity-project> --roots Scripts,Source --watch --output graph.json
+```
+
+## Launcher
+
+Run the launcher from source:
+
+```powershell
+dotnet run --project .\UnityCodeGraph.Launcher
+```
+
+The launcher lets you:
+
+- Choose a Unity project folder.
+- Clone a public Git repository.
+- Choose code folder names such as `Scripts,Source`.
+- Generate once or start watch mode.
+- Reopen recent projects.
+- Open the graph canvas in your browser.
+
+`Open Canvas` starts the launcher's built-in local static server. If the
+configured `Output JSON` file exists, the canvas loads it automatically.
+
+## Web Viewer
+
+The easiest way to open the viewer is through the launcher's `Open Canvas`
+button.
+
+You can also serve the workspace root manually:
+
+```powershell
+dotnet run --project .\UnityCodeGraph -- .\samples\MiniUnityStyle --output .\samples\mini-graph.json
+node .\tools\static-server.mjs 5173 .
+```
+
+Then open:
+
+```text
+http://localhost:5173/web/
+```
+
+In the viewer:
+
+- Use `Load JSON` to open a generated graph file.
+- Use `Type View` for type-level inspection.
+- Use `System View` to collapse types into system cards.
+- Use `Pin View` to keep a selected relationship view while moving nodes.
+- Use `Export Layout` and `Import Layout` to move saved positions, filters, view
+  mode, and zoom state between browsers or machines.
+- Select a node to see details, related examples, code call summaries, and flow
+  traces.
+
+## Build And Publish
+
+Quick Debug build:
+
+```powershell
+.\build.bat
+```
+
+Release build checks:
+
+```powershell
+.\build.bat -Release
+```
+
+Publish the Windows bundle and zip:
+
+```powershell
+.\build.bat -Release -Publish -Zip
+```
+
+The publish output is:
+
+```text
+dist\UnityCodeGraph-win-x64\
+dist\UnityCodeGraph-win-x64.zip
+```
+
+Run the published launcher:
+
+```powershell
+.\dist\UnityCodeGraph-win-x64\UnityCodeGraphLauncher.exe
+```
+
+Run the published CLI:
+
+```powershell
+.\dist\UnityCodeGraph-win-x64\UnityCodeGraph.exe <path-to-unity-project> --roots Scripts,Source --output graph.json
+```
+
+Create a larger self-contained package that does not require a matching .NET
+runtime on the target machine:
+
+```powershell
+.\build.bat -Release -Publish -Zip -SelfContained
 ```
 
 ## Verify Analysis
@@ -38,80 +166,9 @@ Run the parser regression fixture:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\verify-analysis.ps1
 ```
 
-## Build an Exe
-
-Publish a Windows executable:
-
-```powershell
-.\tools\publish-win.ps1
-```
-
-Run the WebView2 GUI launcher:
-
-```powershell
-.\dist\UnityCodeGraph-win-x64\UnityCodeGraphLauncher.exe
-```
-
-The launcher uses an HTML/CSS interface hosted in WebView2. It lets you choose a
-project folder, paste a Git repository URL, generate once, start/stop watch
-mode, or open the web canvas.
-
-`Open Canvas` starts the launcher's built-in local static server and opens the
-web canvas in your default browser. If the launcher's `Output JSON` file exists,
-the canvas loads it automatically.
-
-Run the CLI directly:
-
-```powershell
-.\dist\UnityCodeGraph-win-x64\UnityCodeGraph.exe <path-to-unity-project> --roots Scripts,Source --output graph.json
-```
-
-If you double-click the executable with no arguments, it starts an interactive
-watch mode. Paste the Unity project path, confirm the code folder names, and it
-will keep running until you press `Ctrl+C`.
-
-Command-line watch mode:
-
-```powershell
-.\dist\UnityCodeGraph-win-x64\UnityCodeGraph.exe <path-to-unity-project> --roots Scripts,Source --watch --output graph.json
-```
-
-For a larger executable that does not require a matching .NET runtime on the
-target machine:
-
-```powershell
-.\tools\publish-win.ps1 -SelfContained
-```
-
-## Web Canvas
-
-Generate a graph, then serve the workspace root and open `/web/`.
-
-```powershell
-dotnet run --project .\UnityCodeGraph -- .\samples\MiniUnityStyle --output .\samples\mini-graph.json
-node .\tools\static-server.mjs 5173 .
-```
-
-Open `http://localhost:5173/web/`.
-
-The canvas can also load any generated graph file through the `Load JSON`
-button.
-
-Use `Export Layout` and `Import Layout` to move the saved canvas positions,
-filters, view mode, and zoom state between browsers or machines.
-
-The left `Systems` panel shows first-pass system clusters such as card, battle,
-map generation, and UI areas. Selecting a system filters the canvas to that
-cluster and shows a local `System Report` with likely role, major types, entry
-candidates, likely static flows, and external touchpoints.
-
-The canvas has two graph modes:
-
-- `Type View` lays out types in grid-backed sections. Edges default to focused
-  mode, so the graph starts quiet and highlights relationships when a type or
-  system is selected.
-- `System View` collapses type relationships into system cards and draws
-  system-to-system touchpoints separately.
+The fixture checks using-aware type resolution, type constraints, Unity generic
+calls, casts and type checks, static calls, method call edges, and false-positive
+avoidance for duplicate type names.
 
 ## Extracted Relationships
 
@@ -140,6 +197,6 @@ The canvas has two graph modes:
 
 ## Notes
 
-This version intentionally avoids AI and focuses on mechanical extraction. It
-uses Roslyn syntax trees from the installed .NET SDK, so it does not need NuGet
-packages for the first pass.
+This project intentionally avoids AI for the current analysis pass. The graph is
+based on mechanical extraction from C# syntax, which keeps the output local,
+repeatable, and explainable.
