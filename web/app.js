@@ -11,6 +11,8 @@ const SYSTEM_HEIGHT = 132;
 const SYSTEM_GAP_X = 80;
 const SYSTEM_GAP_Y = 70;
 const SAMPLE_URL = "../samples/mini-graph.json";
+const VIEW_STATE_VERSION = 1;
+const VIEW_STATE_PREFIX = "UnityCodeGraph:view:";
 
 const sampleGraph = {
   RootPath: "embedded sample",
@@ -34,6 +36,16 @@ const sampleGraph = {
     { Source: "Sample.Gameplay.PlayerController", Target: "Sample.Gameplay.InventoryModel", Kind: "creates", Weight: 1, Examples: [{ File: "PlayerController.cs", Line: 18, Text: "InventoryModel" }] },
     { Source: "Sample.Gameplay.HealthView", Target: "Sample.Gameplay.InventoryModel", Kind: "accepts_parameter", Weight: 1, Examples: [{ File: "HealthView.cs", Line: 7, Text: "InventoryModel" }] },
     { Source: "Sample.Gameplay.InventoryModel", Target: "Sample.Gameplay.Weapon", Kind: "has_field_type", Weight: 1, Examples: [{ File: "InventoryModel.cs", Line: 5, Text: "Weapon" }] }
+  ],
+  Methods: [
+    { Id: "Sample.Gameplay.PlayerController.Awake@15", TypeId: "Sample.Gameplay.PlayerController", Name: "Awake", Signature: "Awake()", Kind: "method", File: "PlayerController.cs", Line: 15, IsEntryPoint: true, EntryKind: "unity_lifecycle" },
+    { Id: "Sample.Gameplay.PlayerController.TakeDamage@22", TypeId: "Sample.Gameplay.PlayerController", Name: "TakeDamage", Signature: "TakeDamage(int)", Kind: "method", File: "PlayerController.cs", Line: 22, IsEntryPoint: false, EntryKind: "" },
+    { Id: "Sample.Gameplay.HealthView.Bind@7", TypeId: "Sample.Gameplay.HealthView", Name: "Bind", Signature: "Bind(InventoryModel)", Kind: "method", File: "HealthView.cs", Line: 7, IsEntryPoint: false, EntryKind: "" },
+    { Id: "Sample.Gameplay.HealthView.ShowDamage@11", TypeId: "Sample.Gameplay.HealthView", Name: "ShowDamage", Signature: "ShowDamage(int)", Kind: "method", File: "HealthView.cs", Line: 11, IsEntryPoint: false, EntryKind: "" }
+  ],
+  MethodEdges: [
+    { Source: "Sample.Gameplay.PlayerController.Awake@15", Target: "Sample.Gameplay.HealthView.Bind@7", Kind: "calls", Weight: 1, Examples: [{ File: "PlayerController.cs", Line: 19, Text: "healthView.Bind(inventory)" }] },
+    { Source: "Sample.Gameplay.PlayerController.TakeDamage@22", Target: "Sample.Gameplay.HealthView.ShowDamage@11", Kind: "calls", Weight: 1, Examples: [{ File: "PlayerController.cs", Line: 24, Text: "healthView.ShowDamage(amount)" }] }
   ]
 };
 
@@ -54,6 +66,8 @@ const state = {
   selectedEntry: "",
   flowDepth: 3,
   pinView: false,
+  storageKey: "",
+  saveTimer: 0,
   transform: { x: 40, y: 40, scale: 1 },
   drag: null,
   pan: null
@@ -69,6 +83,8 @@ const els = {
   systemList: document.getElementById("systemList"),
   search: document.getElementById("searchInput"),
   file: document.getElementById("fileInput"),
+  layoutFile: document.getElementById("layoutInput"),
+  exportLayout: document.getElementById("exportLayoutButton"),
   sample: document.getElementById("sampleButton"),
   pinMode: document.getElementById("pinModeButton"),
   fit: document.getElementById("fitButton"),
@@ -96,7 +112,7 @@ init();
 
 async function init() {
   bindEvents();
-  await loadSampleGraph();
+  await loadInitialGraph();
   requestAnimationFrame(() => document.body.classList.add("graph-loaded"));
 }
 
@@ -111,8 +127,23 @@ function bindEvents() {
     if (!file) return;
     const graph = JSON.parse(await file.text());
     loadGraph(graph, file.name);
+    event.target.value = "";
   });
 
+  els.layoutFile.addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    try {
+      importViewState(JSON.parse(await file.text()));
+    } catch (error) {
+      console.warn(error);
+      window.alert("Could not import layout JSON.");
+    } finally {
+      event.target.value = "";
+    }
+  });
+
+  els.exportLayout.addEventListener("click", exportViewState);
   els.sample.addEventListener("click", loadSampleGraph);
   els.pinMode.addEventListener("click", () => {
     state.pinView = !state.pinView;
@@ -134,9 +165,11 @@ function bindEvents() {
     els.edgeMode.value = state.edgeMode;
     els.neighborhoodDepth.value = String(state.neighborhoodDepth);
     els.neighborhoodDirection.value = state.neighborhoodDirection;
+    els.flowDepth.value = String(state.flowDepth);
     syncPinModeButton();
     state.enabledKinds = new Set(state.edgeKinds);
     state.selected = null;
+    clearSavedViewState();
     relayout();
     fitToView();
     render();
@@ -149,6 +182,7 @@ function bindEvents() {
     relayout();
     render();
     fitToView();
+    scheduleSaveViewState();
   });
 
   els.group.addEventListener("change", () => {
@@ -156,23 +190,27 @@ function bindEvents() {
     relayout();
     render();
     fitToView();
+    scheduleSaveViewState();
   });
 
   els.edgeMode.addEventListener("change", () => {
     state.edgeMode = els.edgeMode.value;
     render();
+    scheduleSaveViewState();
   });
 
   els.neighborhoodDepth.addEventListener("change", () => {
     state.neighborhoodDepth = Number(els.neighborhoodDepth.value);
     render();
     if (state.edgeMode === "selected" && state.selected?.type === "node") fitToView();
+    scheduleSaveViewState();
   });
 
   els.neighborhoodDirection.addEventListener("change", () => {
     state.neighborhoodDirection = els.neighborhoodDirection.value;
     render();
     if (state.edgeMode === "selected" && state.selected?.type === "node") fitToView();
+    scheduleSaveViewState();
   });
 
   els.entrySelect.addEventListener("change", () => {
@@ -183,6 +221,7 @@ function bindEvents() {
   els.flowDepth.addEventListener("change", () => {
     state.flowDepth = Number(els.flowDepth.value);
     renderFlowTrace();
+    scheduleSaveViewState();
   });
 
   els.svg.addEventListener("wheel", onWheel, { passive: false });
@@ -212,20 +251,56 @@ function loadGraph(graph, label) {
     SystemClusters: graph.SystemClusters ?? graph.systemClusters ?? []
   };
   state.graph = normalized;
+  state.storageKey = graphStorageKey(normalized);
   state.edgeKinds = new Set(normalized.Edges.map(edge => edge.Kind));
   state.enabledKinds = new Set(state.edgeKinds);
+  state.search = "";
+  state.viewMode = "type";
+  state.groupBy = "namespace";
+  state.edgeMode = "focused";
+  state.neighborhoodDepth = 2;
+  state.neighborhoodDirection = "both";
+  state.flowDepth = 3;
+  state.selectedSystemId = "";
+  state.transform = { x: 40, y: 40, scale: 1 };
+  const savedViewState = readSavedViewState();
+  const restored = restoreViewState(savedViewState);
   const layout = layoutGraph(normalized, state.groupBy);
   state.positions = layout.positions;
   state.sections = layout.sections;
+  if (restored) {
+    restoreSavedPositions(savedViewState);
+  }
   state.selected = null;
   state.pinView = false;
+  syncGraphControls();
   syncPinModeButton();
   els.subtitle.textContent = `${label} · ${normalized.Nodes.length} types · ${normalized.Edges.length} relationships`;
   renderFilters();
   renderSystems();
   render();
   requestAnimationFrame(() => document.body.classList.add("graph-loaded"));
-  requestAnimationFrame(() => fitToView());
+  if (!restored) {
+    requestAnimationFrame(() => fitToView());
+  }
+}
+
+async function loadInitialGraph() {
+  const graphUrl = new URLSearchParams(window.location.search).get("graph");
+  if (!graphUrl) {
+    await loadSampleGraph();
+    return;
+  }
+
+  try {
+    const response = await fetch(graphUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error(`graph unavailable: ${response.status}`);
+    const label = graphUrl.endsWith("/graph/current.json") ? "launcher output" : graphUrl;
+    loadGraph(await response.json(), label);
+  } catch (error) {
+    console.warn(error);
+    await loadSampleGraph();
+  }
 }
 
 function relayout() {
@@ -233,6 +308,217 @@ function relayout() {
   const layout = layoutGraph(state.graph, state.groupBy);
   state.positions = layout.positions;
   state.sections = layout.sections;
+}
+
+function graphStorageKey(graph) {
+  const nodes = (graph.Nodes ?? [])
+    .map(node => `${node.Id}|${node.File ?? ""}|${node.Line ?? ""}`)
+    .sort()
+    .join("\n");
+  const signature = `${graph.RootPath ?? ""}\n${nodes}\n${(graph.Edges ?? []).length}`;
+  return `${VIEW_STATE_PREFIX}${hashString(signature)}`;
+}
+
+function readSavedViewState() {
+  if (!state.storageKey) return null;
+  try {
+    const raw = localStorage.getItem(state.storageKey);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function restoreViewState(saved) {
+  if (!saved || saved.version !== VIEW_STATE_VERSION) {
+    return false;
+  }
+
+  state.viewMode = validOption(els.viewMode, saved.viewMode, state.viewMode);
+  state.groupBy = validOption(els.group, saved.groupBy, state.groupBy);
+  state.edgeMode = validOption(els.edgeMode, saved.edgeMode, state.edgeMode);
+  if (state.edgeMode === "selected") {
+    state.edgeMode = "focused";
+  }
+  state.neighborhoodDepth = clamp(Number(saved.neighborhoodDepth) || state.neighborhoodDepth, 1, 4);
+  state.neighborhoodDirection = validOption(els.neighborhoodDirection, saved.neighborhoodDirection, state.neighborhoodDirection);
+  state.flowDepth = clamp(Number(saved.flowDepth) || state.flowDepth, 2, 5);
+
+  if (Array.isArray(saved.enabledKinds)) {
+    state.enabledKinds = new Set(saved.enabledKinds.filter(kind => state.edgeKinds.has(kind)));
+  }
+
+  const clusterIds = new Set((state.graph?.SystemClusters ?? []).map(cluster => cluster.Id));
+  state.selectedSystemId = clusterIds.has(saved.selectedSystemId) ? saved.selectedSystemId : "";
+
+  if (isFiniteNumber(saved.transform?.x)
+      && isFiniteNumber(saved.transform?.y)
+      && isFiniteNumber(saved.transform?.scale)) {
+    state.transform = {
+      x: saved.transform.x,
+      y: saved.transform.y,
+      scale: clamp(saved.transform.scale, 0.18, 2.5)
+    };
+  }
+
+  return true;
+}
+
+function restoreSavedPositions(saved) {
+  if (!saved?.positions || typeof saved.positions !== "object") {
+    return;
+  }
+
+  const nodeIds = new Set((state.graph?.Nodes ?? []).map(node => node.Id));
+  for (const [id, position] of Object.entries(saved.positions)) {
+    if (!nodeIds.has(id) || !isFiniteNumber(position?.x) || !isFiniteNumber(position?.y)) {
+      continue;
+    }
+
+    state.positions.set(id, { x: position.x, y: position.y });
+  }
+}
+
+function syncGraphControls() {
+  els.search.value = state.search;
+  els.viewMode.value = state.viewMode;
+  els.group.value = state.groupBy;
+  els.edgeMode.value = state.edgeMode;
+  els.neighborhoodDepth.value = String(state.neighborhoodDepth);
+  els.neighborhoodDirection.value = state.neighborhoodDirection;
+  els.flowDepth.value = String(state.flowDepth);
+}
+
+function scheduleSaveViewState() {
+  if (!state.storageKey) return;
+  window.clearTimeout(state.saveTimer);
+  state.saveTimer = window.setTimeout(saveViewState, 180);
+}
+
+function saveViewState() {
+  if (!state.storageKey || !state.graph) return;
+
+  const data = createViewStateData();
+  try {
+    localStorage.setItem(state.storageKey, JSON.stringify(data));
+  } catch {
+    // Persisting view state is a convenience feature; rendering should never depend on it.
+  }
+}
+
+function createViewStateData() {
+  const positions = {};
+  for (const [id, position] of state.positions) {
+    positions[id] = {
+      x: Math.round(position.x * 100) / 100,
+      y: Math.round(position.y * 100) / 100
+    };
+  }
+
+  const data = {
+    version: VIEW_STATE_VERSION,
+    savedAt: new Date().toISOString(),
+    viewMode: state.viewMode,
+    groupBy: state.groupBy,
+    edgeMode: state.edgeMode === "selected" ? "focused" : state.edgeMode,
+    neighborhoodDepth: state.neighborhoodDepth,
+    neighborhoodDirection: state.neighborhoodDirection,
+    flowDepth: state.flowDepth,
+    selectedSystemId: state.selectedSystemId,
+    enabledKinds: [...state.enabledKinds],
+    transform: {
+      x: Math.round(state.transform.x * 100) / 100,
+      y: Math.round(state.transform.y * 100) / 100,
+      scale: Math.round(state.transform.scale * 1000) / 1000
+    },
+    positions
+  };
+}
+
+function exportViewState() {
+  if (!state.graph) return;
+
+  const data = {
+    ...createViewStateData(),
+    exportedAt: new Date().toISOString(),
+    graph: {
+      rootPath: state.graph.RootPath ?? "",
+      nodeCount: state.graph.Nodes?.length ?? 0,
+      edgeCount: state.graph.Edges?.length ?? 0,
+      storageKey: state.storageKey
+    }
+  };
+
+  const label = safeFileName(state.graph.RootPath || "code-graph");
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${label}-layout.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function importViewState(data) {
+  if (!state.graph) return;
+  if (!data || data.version !== VIEW_STATE_VERSION) {
+    window.alert("This layout file uses an unsupported format.");
+    return;
+  }
+
+  const restoredPositions = countRestorablePositions(data);
+  if (data.positions && restoredPositions === 0) {
+    window.alert("No nodes in this layout file match the current graph.");
+    return;
+  }
+
+  const baseLayout = layoutGraph(state.graph, validOption(els.group, data.groupBy, state.groupBy));
+  state.positions = baseLayout.positions;
+  state.sections = baseLayout.sections;
+  const restored = restoreViewState(data);
+  restoreSavedPositions(data);
+  syncGraphControls();
+  renderFilters();
+  renderSystems();
+  render();
+  if (!restored) {
+    fitToView();
+  }
+  scheduleSaveViewState();
+}
+
+function safeFileName(value) {
+  const name = String(value)
+    .replaceAll("\\", "/")
+    .split("/")
+    .filter(Boolean)
+    .pop() || "code-graph";
+
+  return name
+    .replace(/[^a-z0-9._-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "code-graph";
+}
+
+function countRestorablePositions(saved) {
+  if (!saved?.positions || typeof saved.positions !== "object") {
+    return 0;
+  }
+
+  const nodeIds = new Set((state.graph?.Nodes ?? []).map(node => node.Id));
+  return Object.keys(saved.positions).filter(id => nodeIds.has(id)).length;
+}
+
+function clearSavedViewState() {
+  if (!state.storageKey) return;
+  window.clearTimeout(state.saveTimer);
+  try {
+    localStorage.removeItem(state.storageKey);
+  } catch {
+    // Ignore unavailable storage.
+  }
 }
 
 function layoutGraph(graph, groupBy) {
@@ -351,6 +637,7 @@ function renderFilters() {
       if (event.target.checked) state.enabledKinds.add(kind);
       else state.enabledKinds.delete(kind);
       render();
+      scheduleSaveViewState();
     });
     els.edgeFilters.appendChild(item);
   }
@@ -390,6 +677,7 @@ function renderSystems() {
       renderSystems();
       render();
       requestAnimationFrame(() => fitToView());
+      scheduleSaveViewState();
     });
   }
 }
@@ -760,8 +1048,8 @@ function renderDetails() {
       ["Degree", `${outgoing} out · ${incoming} in`]
     ]);
     appendDetailRow("Neighborhood", neighborhood ? `${neighborhood.size} types / depth ${state.neighborhoodDepth} / ${state.neighborhoodDirection}` : "-");
-    els.secondaryTitle.textContent = "Examples";
-    els.examples.innerHTML = "";
+    els.secondaryTitle.textContent = "Code Calls";
+    els.examples.innerHTML = codeCallSummaryHtml(node);
     renderFlowTrace(node.Id);
     return;
   }
@@ -1112,6 +1400,135 @@ function renderExamples(examples) {
     : "<p>No examples recorded.</p>";
 }
 
+function codeCallSummaryHtml(node) {
+  const methods = state.graph?.Methods ?? [];
+  const methodEdges = state.graph?.MethodEdges ?? [];
+  const edges = state.graph?.Edges ?? [];
+  const methodById = new Map(methods.map(method => [method.Id, method]));
+  const typeById = new Map((state.graph?.Nodes ?? []).map(item => [item.Id, item]));
+
+  const outgoingCalls = methodEdges
+    .map(edge => ({
+      edge,
+      source: methodById.get(edge.Source),
+      target: methodById.get(edge.Target)
+    }))
+    .filter(item => item.source?.TypeId === node.Id && item.target?.TypeId !== node.Id)
+    .sort(callSummarySort)
+    .slice(0, 8);
+
+  const incomingCalls = methodEdges
+    .map(edge => ({
+      edge,
+      source: methodById.get(edge.Source),
+      target: methodById.get(edge.Target)
+    }))
+    .filter(item => item.target?.TypeId === node.Id && item.source?.TypeId !== node.Id)
+    .sort(callSummarySort)
+    .slice(0, 6);
+
+  const typeRelations = edges
+    .filter(edge => edge.Source === node.Id && codeSummaryKinds.has(edge.Kind))
+    .sort((a, b) => relationKindRank(a.Kind) - relationKindRank(b.Kind)
+      || (b.Weight ?? 1) - (a.Weight ?? 1)
+      || typeName(typeById.get(a.Target) ?? { Id: a.Target }).localeCompare(typeName(typeById.get(b.Target) ?? { Id: b.Target })))
+    .slice(0, 6);
+
+  const blocks = [
+    callBlockHtml("Calls Out", outgoingCalls, item => callLineHtml(item.source, item.target, item.edge, "out")),
+    callBlockHtml("Called By", incomingCalls, item => callLineHtml(item.source, item.target, item.edge, "in")),
+    relationBlockHtml(typeRelations, typeById)
+  ].filter(Boolean);
+
+  return blocks.length
+    ? `<div class="code-call-summary">${blocks.join("")}</div>`
+    : "<p class=\"muted-text\">No cross-file calls detected for this type.</p>";
+}
+
+const codeSummaryKinds = new Set([
+  "calls_member",
+  "creates",
+  "unity_get_component",
+  "unity_try_get_component",
+  "unity_add_component",
+  "unity_find_object",
+  "unity_create_scriptable_object"
+]);
+
+function callBlockHtml(title, items, row) {
+  if (!items.length) return "";
+  return `
+    <section class="call-block">
+      <h3>${escapeHtml(title)}</h3>
+      ${items.map(row).join("")}
+    </section>
+  `;
+}
+
+function relationBlockHtml(relations, typeById) {
+  if (!relations.length) return "";
+  return `
+    <section class="call-block">
+      <h3>Type Touchpoints</h3>
+      ${relations.map(edge => {
+        const target = typeById.get(edge.Target);
+        const example = edge.Examples?.[0];
+        return `
+          <div class="call-line">
+            <strong>${escapeHtml(formatKind(edge.Kind))} ${escapeHtml(typeName(target ?? { Id: edge.Target }))}</strong>
+            <span>${escapeHtml(example ? `${shortFile(example.File)}:${example.Line}` : `${edge.Weight ?? 1} refs`)}</span>
+          </div>
+        `;
+      }).join("")}
+    </section>
+  `;
+}
+
+function callLineHtml(source, target, edge, direction) {
+  const example = edge.Examples?.[0];
+  const left = direction === "out" ? compactMethodLabel(source) : compactMethodLabel(target);
+  const right = direction === "out" ? compactMethodLabel(target, true) : compactMethodLabel(source, true);
+  const arrow = direction === "out" ? "-&gt;" : "&lt;-";
+  return `
+    <div class="call-line">
+      <strong>${escapeHtml(left)} <span>${arrow}</span> ${escapeHtml(right)}</strong>
+      <span>${escapeHtml(example ? `${shortFile(example.File)}:${example.Line}` : `${edge.Weight ?? 1} calls`)}</span>
+    </div>
+  `;
+}
+
+function callSummarySort(a, b) {
+  return (b.edge.Weight ?? 1) - (a.edge.Weight ?? 1)
+    || (a.source?.Line ?? 0) - (b.source?.Line ?? 0)
+    || (a.target?.Line ?? 0) - (b.target?.Line ?? 0);
+}
+
+function relationKindRank(kind) {
+  return [
+    "calls_member",
+    "creates",
+    "unity_get_component",
+    "unity_try_get_component",
+    "unity_add_component",
+    "unity_find_object",
+    "unity_create_scriptable_object"
+  ].indexOf(kind);
+}
+
+function compactMethodLabel(method, includeType = false) {
+  if (!method) return "unknown";
+  const signature = String(method.Signature ?? method.Name ?? "").replace(/\s+/g, " ");
+  return includeType ? `${typeName({ Id: method.TypeId })}.${signature}` : signature;
+}
+
+function typeName(node) {
+  return String(node?.Name || node?.Id || "")
+    .split(".")
+    .pop()
+    .split("+")
+    .pop();
+}
+
 function fitToView() {
   const items = state.viewMode === "system"
     ? filteredSystemClusters().map(cluster => ({ id: cluster.Id, width: SYSTEM_WIDTH, height: SYSTEM_HEIGHT }))
@@ -1142,6 +1559,7 @@ function fitToView() {
   state.transform.x = (rect.width - (bounds.minX + bounds.maxX) * state.transform.scale) / 2;
   state.transform.y = (rect.height - (bounds.minY + bounds.maxY) * state.transform.scale) / 2;
   render();
+  scheduleSaveViewState();
 }
 
 function applyTransform() {
@@ -1158,6 +1576,7 @@ function onWheel(event) {
   state.transform.x += (after.x - before.x) * state.transform.scale;
   state.transform.y += (after.y - before.y) * state.transform.scale;
   render();
+  scheduleSaveViewState();
 }
 
 function onPointerDown(event) {
@@ -1185,9 +1604,13 @@ function onPointerMove(event) {
 }
 
 function onPointerUp() {
+  const shouldSave = Boolean(state.drag || state.pan);
   state.drag = null;
   state.pan = null;
   els.svg.classList.remove("is-panning");
+  if (shouldSave) {
+    scheduleSaveViewState();
+  }
 }
 
 function selectNodeForInteraction(nodeId) {
@@ -1277,6 +1700,23 @@ function countBy(items, keyFn) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function validOption(select, value, fallback) {
+  return [...select.options].some(option => option.value === value) ? value : fallback;
+}
+
+function isFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function hashString(value) {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function escapeHtml(value) {

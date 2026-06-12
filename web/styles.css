@@ -284,6 +284,8 @@ select:focus {
 .filter-list,
 .system-list,
 .examples,
+.code-call-summary,
+.call-block,
 .flow-list {
   display: grid;
   gap: 8px;
@@ -293,12 +295,54 @@ select:focus {
 .system-item,
 .stats div,
 .example,
+.call-line,
 .report-row,
 .report-flow,
 .flow-row {
   border: 1px solid var(--ink);
   border-radius: 0;
   background: rgba(255, 255, 255, 0.72);
+}
+
+.code-call-summary {
+  gap: 14px;
+}
+
+.call-block h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.call-line {
+  display: grid;
+  gap: 4px;
+  padding: 8px 9px;
+  background:
+    linear-gradient(108deg, rgba(141, 204, 255, 0.18), transparent 48%),
+    rgba(255, 255, 255, 0.72);
+}
+
+.call-line strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-line strong span {
+  color: var(--blue-strong);
+}
+
+.call-line > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .filter-item {
