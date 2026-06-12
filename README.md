@@ -30,6 +30,14 @@ whenever `.cs` files are added, changed, deleted, or renamed:
 dotnet run --project .\UnityCodeGraph -- <path-to-unity-project> --roots Scripts,Source --watch --output graph.json
 ```
 
+## Verify Analysis
+
+Run the parser regression fixture:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\verify-analysis.ps1
+```
+
 ## Build an Exe
 
 Publish a Windows executable:
@@ -48,9 +56,9 @@ The launcher uses an HTML/CSS interface hosted in WebView2. It lets you choose a
 project folder, paste a Git repository URL, generate once, start/stop watch
 mode, or open the web canvas.
 
-`Open Canvas` starts the local static server and opens `http://127.0.0.1:5173/web/`
-in your default browser. Use `Load JSON` in the canvas to choose the graph file
-from the launcher's `Output JSON` path.
+`Open Canvas` starts the launcher's built-in local static server and opens the
+web canvas in your default browser. If the launcher's `Output JSON` file exists,
+the canvas loads it automatically.
 
 Run the CLI directly:
 
@@ -89,6 +97,9 @@ Open `http://localhost:5173/web/`.
 The canvas can also load any generated graph file through the `Load JSON`
 button.
 
+Use `Export Layout` and `Import Layout` to move the saved canvas positions,
+filters, view mode, and zoom state between browsers or machines.
+
 The left `Systems` panel shows first-pass system clusters such as card, battle,
 map generation, and UI areas. Selecting a system filters the canvas to that
 cluster and shows a local `System Report` with likely role, major types, entry
@@ -109,6 +120,7 @@ The canvas has two graph modes:
 - `has_attribute`
 - `member_attribute`
 - `attribute_type_argument`
+- `type_constraint`
 - `has_field_type`
 - `has_property_type`
 - `has_event_type`
@@ -117,6 +129,8 @@ The canvas has two graph modes:
 - `uses_local_type`
 - `creates`
 - `typeof`
+- `casts_to`
+- `type_check`
 - `calls_member`
 - `unity_get_component`
 - `unity_try_get_component`
