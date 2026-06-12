@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -27,7 +29,7 @@ internal sealed class LauncherForm : Form
 {
     private readonly WebView2 _webView = new() { Dock = DockStyle.Fill };
     private Process? _parserProcess;
-    private Process? _canvasServerProcess;
+    private CanvasServer? _canvasServer;
 
     public LauncherForm()
     {
@@ -226,68 +228,32 @@ internal sealed class LauncherForm : Form
             return;
         }
 
-        var serverPath = Path.Combine(workspaceRoot, "tools", "static-server.mjs");
-        await EnsureCanvasServerAsync(serverPath, workspaceRoot);
+        var settings = await GetCurrentSettingsAsync();
+        var graphPath = File.Exists(settings.OutputPath) ? Path.GetFullPath(settings.OutputPath) : null;
+        EnsureCanvasServer(workspaceRoot, graphPath);
 
-        var url = "http://127.0.0.1:5173/web/";
+        var url = _canvasServer!.BaseUrl + "web/";
+        if (graphPath is not null)
+        {
+            url += "?graph=/graph/current.json";
+        }
+
         Log($"Opening canvas: {url}");
         Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
     }
 
-    private async Task EnsureCanvasServerAsync(string serverPath, string workspaceRoot)
+    private void EnsureCanvasServer(string workspaceRoot, string? graphPath)
     {
-        if (_canvasServerProcess is { HasExited: false } || await IsCanvasServerAvailableAsync())
+        if (_canvasServer is not null && _canvasServer.WorkspaceRoot.Equals(workspaceRoot, StringComparison.OrdinalIgnoreCase))
         {
+            _canvasServer.GraphPath = graphPath;
             return;
         }
 
-        var nodePath = FindNodeExecutable();
-        if (nodePath is null)
-        {
-            Log("Node.js was not found. Install Node.js or run the static server manually.");
-            return;
-        }
+        StopCanvasServer();
 
         Log("Starting canvas server.");
-        var process = CreateProcess(nodePath, $"\"{serverPath}\" 5173 \"{workspaceRoot}\"");
-        process.StartInfo.WorkingDirectory = workspaceRoot;
-        process.EnableRaisingEvents = true;
-        process.OutputDataReceived += (_, eventArgs) => Log(eventArgs.Data);
-        process.ErrorDataReceived += (_, eventArgs) => Log(eventArgs.Data);
-        process.Exited += (_, _) => BeginInvoke(new Action(() =>
-        {
-            Log("Canvas server stopped.");
-            _canvasServerProcess?.Dispose();
-            _canvasServerProcess = null;
-        }));
-        process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-        _canvasServerProcess = process;
-
-        for (var i = 0; i < 20; i++)
-        {
-            if (await IsCanvasServerAvailableAsync())
-            {
-                return;
-            }
-
-            await Task.Delay(150);
-        }
-    }
-
-    private static async Task<bool> IsCanvasServerAvailableAsync()
-    {
-        try
-        {
-            using var client = new HttpClient { Timeout = TimeSpan.FromMilliseconds(500) };
-            using var response = await client.GetAsync("http://127.0.0.1:5173/web/");
-            return response.IsSuccessStatusCode;
-        }
-        catch
-        {
-            return false;
-        }
+        _canvasServer = CanvasServer.Start(workspaceRoot, graphPath);
     }
 
     private async Task<int> RunProcessAsync(string fileName, string arguments)
@@ -342,22 +308,8 @@ internal sealed class LauncherForm : Form
 
     private void StopCanvasServer()
     {
-        if (_canvasServerProcess is null)
-        {
-            return;
-        }
-
-        try
-        {
-            if (!_canvasServerProcess.HasExited)
-            {
-                _canvasServerProcess.Kill(entireProcessTree: true);
-            }
-        }
-        catch
-        {
-            // Convenience server shutdown can race with app close.
-        }
+        _canvasServer?.Dispose();
+        _canvasServer = null;
     }
 
     private void Log(string? message)
@@ -444,8 +396,7 @@ internal sealed class LauncherForm : Form
             for (var i = 0; i < 10 && directory is not null; i++, directory = directory.Parent)
             {
                 var webPath = Path.Combine(directory.FullName, "web", "index.html");
-                var serverPath = Path.Combine(directory.FullName, "tools", "static-server.mjs");
-                if (File.Exists(webPath) && File.Exists(serverPath))
+                if (File.Exists(webPath))
                 {
                     return directory.FullName;
                 }
@@ -455,26 +406,253 @@ internal sealed class LauncherForm : Form
         return null;
     }
 
-    private static string? FindNodeExecutable()
+    private async Task<LauncherSettings> GetCurrentSettingsAsync()
     {
-        var pathVariable = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        foreach (var directory in pathVariable.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        if (_webView.CoreWebView2 is null)
         {
-            var candidate = Path.Combine(directory.Trim('"'), "node.exe");
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
+            return new LauncherSettings(string.Empty, string.Empty, Path.Combine(Environment.CurrentDirectory, "code-graph.json"));
         }
 
-        var defaultPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs", "node.exe");
-        return File.Exists(defaultPath) ? defaultPath : null;
+        var json = await _webView.CoreWebView2.ExecuteScriptAsync("""
+            JSON.stringify({
+              projectPath: document.querySelector("#projectPath")?.value ?? "",
+              roots: document.querySelector("#roots")?.value ?? "",
+              outputPath: document.querySelector("#outputPath")?.value ?? ""
+            })
+            """);
+        var encoded = JsonSerializer.Deserialize<string>(json) ?? "{}";
+        using var document = JsonDocument.Parse(encoded);
+        return GetSettings(document.RootElement);
     }
 
     private static string Hash(string input)
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
         return Convert.ToHexString(bytes)[..16].ToLowerInvariant();
+    }
+}
+
+internal sealed class CanvasServer : IDisposable
+{
+    private static readonly IReadOnlyDictionary<string, string> ContentTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        [".html"] = "text/html; charset=utf-8",
+        [".css"] = "text/css; charset=utf-8",
+        [".js"] = "text/javascript; charset=utf-8",
+        [".json"] = "application/json; charset=utf-8",
+        [".svg"] = "image/svg+xml; charset=utf-8",
+        [".png"] = "image/png",
+        [".jpg"] = "image/jpeg",
+        [".jpeg"] = "image/jpeg",
+        [".webp"] = "image/webp"
+    };
+
+    private readonly TcpListener _listener;
+    private readonly CancellationTokenSource _stopping = new();
+    private readonly Task _loop;
+
+    private CanvasServer(string workspaceRoot, string? graphPath, int port)
+    {
+        WorkspaceRoot = Path.GetFullPath(workspaceRoot);
+        GraphPath = graphPath is null ? null : Path.GetFullPath(graphPath);
+        Port = port;
+        BaseUrl = $"http://127.0.0.1:{Port}/";
+        _listener = new TcpListener(IPAddress.Loopback, Port);
+        _listener.Start();
+        _loop = Task.Run(ListenAsync);
+    }
+
+    public string WorkspaceRoot { get; }
+    public string? GraphPath { get; set; }
+    public int Port { get; }
+    public string BaseUrl { get; }
+
+    public static CanvasServer Start(string workspaceRoot, string? graphPath)
+    {
+        for (var port = 5173; port < 5200; port++)
+        {
+            try
+            {
+                return new CanvasServer(workspaceRoot, graphPath, port);
+            }
+            catch (SocketException)
+            {
+                // Port is already taken.
+            }
+        }
+
+        throw new InvalidOperationException("Could not start a local canvas server on ports 5173-5199.");
+    }
+
+    public void Dispose()
+    {
+        _stopping.Cancel();
+        try
+        {
+            _listener.Stop();
+        }
+        catch
+        {
+            // Listener can already be stopped during app shutdown.
+        }
+
+        _stopping.Dispose();
+    }
+
+    private async Task ListenAsync()
+    {
+        while (!_stopping.IsCancellationRequested)
+        {
+            TcpClient client;
+            try
+            {
+                client = await _listener.AcceptTcpClientAsync(_stopping.Token);
+            }
+            catch
+            {
+                if (_stopping.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                continue;
+            }
+
+            _ = Task.Run(() => HandleAsync(client), _stopping.Token);
+        }
+    }
+
+    private async Task HandleAsync(TcpClient client)
+    {
+        using var _ = client;
+        await using var stream = client.GetStream();
+
+        try
+        {
+            using var reader = new StreamReader(stream, Encoding.ASCII, leaveOpen: true);
+            var requestLine = await reader.ReadLineAsync();
+            if (string.IsNullOrWhiteSpace(requestLine))
+            {
+                return;
+            }
+
+            string? line;
+            do
+            {
+                line = await reader.ReadLineAsync();
+            } while (!string.IsNullOrEmpty(line));
+
+            var parts = requestLine.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 2 || !parts[0].Equals("GET", StringComparison.OrdinalIgnoreCase))
+            {
+                await WriteTextAsync(stream, 405, "Method Not Allowed");
+                return;
+            }
+
+            var path = Uri.UnescapeDataString(new Uri(parts[1], UriKind.RelativeOrAbsolute).IsAbsoluteUri
+                ? new Uri(parts[1]).AbsolutePath
+                : parts[1].Split('?', 2)[0]);
+
+            if (path.Equals("/graph/current.json", StringComparison.OrdinalIgnoreCase))
+            {
+                await ServeGraphAsync(stream);
+                return;
+            }
+
+            await ServeStaticAsync(stream, path);
+        }
+        catch
+        {
+            if (stream.CanWrite)
+            {
+                await WriteTextAsync(stream, 500, "Server error");
+            }
+        }
+    }
+
+    private async Task ServeGraphAsync(Stream stream)
+    {
+        var graphPath = GraphPath;
+        if (string.IsNullOrWhiteSpace(graphPath) || !File.Exists(graphPath))
+        {
+            await WriteTextAsync(stream, 404, "Graph JSON not found");
+            return;
+        }
+
+        await WriteFileAsync(stream, graphPath, "application/json; charset=utf-8");
+    }
+
+    private async Task ServeStaticAsync(Stream stream, string path)
+    {
+        var relative = path.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+        if (string.IsNullOrWhiteSpace(relative))
+        {
+            relative = Path.Combine("web", "index.html");
+        }
+
+        var fullPath = Path.GetFullPath(Path.Combine(WorkspaceRoot, relative));
+        if (!IsUnderRoot(fullPath, WorkspaceRoot))
+        {
+            await WriteTextAsync(stream, 403, "Forbidden");
+            return;
+        }
+
+        if (Directory.Exists(fullPath))
+        {
+            fullPath = Path.Combine(fullPath, "index.html");
+        }
+
+        if (!File.Exists(fullPath))
+        {
+            await WriteTextAsync(stream, 404, "Not found");
+            return;
+        }
+
+        var contentType = ContentTypes.TryGetValue(Path.GetExtension(fullPath), out var value)
+            ? value
+            : "application/octet-stream";
+        await WriteFileAsync(stream, fullPath, contentType);
+    }
+
+    private static bool IsUnderRoot(string path, string root)
+    {
+        var normalizedRoot = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return path.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase)
+            || path.Equals(root, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task WriteFileAsync(Stream stream, string path, string contentType)
+    {
+        using var file = File.OpenRead(path);
+        await WriteHeaderAsync(stream, 200, contentType, file.Length);
+        await file.CopyToAsync(stream);
+    }
+
+    private static async Task WriteTextAsync(Stream stream, int statusCode, string text)
+    {
+        var bytes = Encoding.UTF8.GetBytes(text);
+        await WriteHeaderAsync(stream, statusCode, "text/plain; charset=utf-8", bytes.Length);
+        await stream.WriteAsync(bytes);
+    }
+
+    private static async Task WriteHeaderAsync(Stream stream, int statusCode, string contentType, long contentLength)
+    {
+        var reason = statusCode switch
+        {
+            200 => "OK",
+            403 => "Forbidden",
+            404 => "Not Found",
+            405 => "Method Not Allowed",
+            _ => "Server Error"
+        };
+        var header = Encoding.ASCII.GetBytes(
+            $"HTTP/1.1 {statusCode} {reason}\r\n" +
+            $"Content-Type: {contentType}\r\n" +
+            $"Content-Length: {contentLength}\r\n" +
+            "Cache-Control: no-store\r\n" +
+            "Connection: close\r\n" +
+            "\r\n");
+        await stream.WriteAsync(header);
     }
 }
 

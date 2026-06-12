@@ -11,7 +11,6 @@ $root = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $root "UnityCodeGraph\UnityCodeGraph.csproj"
 $launcherProject = Join-Path $root "UnityCodeGraph.Launcher\UnityCodeGraph.Launcher.csproj"
 $webSource = Join-Path $root "web"
-$toolsSource = Join-Path $root "tools"
 $output = Join-Path $root "dist\UnityCodeGraph-$Runtime"
 
 function Remove-GeneratedDirectory {
@@ -91,16 +90,12 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $webOutput = Join-Path $output "web"
-$toolsOutput = Join-Path $output "tools"
 $webView2UserData = Join-Path $output "UnityCodeGraphLauncher.exe.WebView2"
 
 Remove-GeneratedDirectory $webOutput
-Remove-GeneratedDirectory $toolsOutput
 Remove-GeneratedDirectory $webView2UserData
 
 Copy-Item -LiteralPath $webSource -Destination $webOutput -Recurse -Force
-New-Item -ItemType Directory -Force -Path $toolsOutput | Out-Null
-Copy-Item -LiteralPath (Join-Path $toolsSource "static-server.mjs") -Destination $toolsOutput -Force
 
 if ($Zip) {
     $zipPath = Join-Path (Split-Path -Parent $output) "UnityCodeGraph-$Runtime.zip"
