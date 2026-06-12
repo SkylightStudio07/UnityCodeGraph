@@ -370,7 +370,7 @@ internal sealed class CodeGraphAnalyzer
 
         var types = root.DescendantNodes()
             .OfType<BaseTypeDeclarationSyntax>()
-            .Select(type => TypeNode.FromSyntax(type, tree))
+            .Select(type => TypeNode.FromSyntax(type, tree, root))
             .ToList();
 
         return new ParsedDocument(file, tree, root, types);
@@ -384,15 +384,26 @@ internal sealed class CodeGraphAnalyzer
     {
         var syntax = type.Syntax;
 
-        if (syntax is TypeDeclarationSyntax typeDeclaration && typeDeclaration.BaseList is not null)
+        if (syntax is TypeDeclarationSyntax typeDeclaration)
         {
-            var baseTypes = typeDeclaration.BaseList.Types.Select(b => b.Type).ToList();
-            for (var i = 0; i < baseTypes.Count; i++)
+            if (typeDeclaration.BaseList is not null)
             {
-                foreach (var reference in TypeReferenceExtractor.Extract(baseTypes[i]))
+                var baseTypes = typeDeclaration.BaseList.Types.Select(b => b.Type).ToList();
+                for (var i = 0; i < baseTypes.Count; i++)
                 {
-                    var kind = edges.IsKnownInterface(reference) ? "implements" : i == 0 ? "inherits" : "implements";
-                    edges.Add(type.Id, reference, kind, baseTypes[i], type.File);
+                    foreach (var reference in TypeReferenceExtractor.Extract(baseTypes[i]))
+                    {
+                        var kind = edges.IsKnownInterface(reference, type.Id) ? "implements" : i == 0 ? "inherits" : "implements";
+                        edges.Add(type.Id, reference, kind, baseTypes[i], type.File);
+                    }
+                }
+            }
+
+            foreach (var constraint in typeDeclaration.ConstraintClauses)
+            {
+                foreach (var typeConstraint in constraint.Constraints.OfType<TypeConstraintSyntax>())
+                {
+                    AddTypeEdges(type, edges, typeConstraint.Type, "type_constraint");
                 }
             }
         }
@@ -411,7 +422,7 @@ internal sealed class CodeGraphAnalyzer
             return;
         }
 
-        var fieldVariables = BuildFieldVariableMap(typeWithMembers, edges);
+        var fieldVariables = BuildMemberVariableMap(type, typeWithMembers, edges);
 
         foreach (var member in typeWithMembers.Members)
         {
@@ -419,12 +430,12 @@ internal sealed class CodeGraphAnalyzer
         }
     }
 
-    private static Dictionary<string, string> BuildFieldVariableMap(TypeDeclarationSyntax type, EdgeCollector edges)
+    private static Dictionary<string, string> BuildMemberVariableMap(TypeNode owner, TypeDeclarationSyntax type, EdgeCollector edges)
     {
         var variables = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var field in type.Members.OfType<FieldDeclarationSyntax>())
         {
-            var reference = ChooseResolvableReference(field.Declaration.Type, edges);
+            var reference = ChooseResolvableReference(field.Declaration.Type, edges, owner.Id);
             if (reference is null)
             {
                 continue;
@@ -433,6 +444,15 @@ internal sealed class CodeGraphAnalyzer
             foreach (var variable in field.Declaration.Variables)
             {
                 variables[variable.Identifier.ValueText] = reference;
+            }
+        }
+
+        foreach (var property in type.Members.OfType<PropertyDeclarationSyntax>())
+        {
+            var reference = ChooseResolvableReference(property.Type, edges, owner.Id);
+            if (reference is not null)
+            {
+                variables[property.Identifier.ValueText] = reference;
             }
         }
 
@@ -475,14 +495,15 @@ internal sealed class CodeGraphAnalyzer
                 foreach (var parameter in method.ParameterList.Parameters)
                 {
                     AddParameterEdges(owner, edges, parameter);
-                    AddParameterVariable(variableTypes, parameter, edges);
+                    AddParameterVariable(owner, variableTypes, parameter, edges);
                 }
+                AddConstraintEdges(owner, edges, method.ConstraintClauses);
                 break;
             case ConstructorDeclarationSyntax constructor:
                 foreach (var parameter in constructor.ParameterList.Parameters)
                 {
                     AddParameterEdges(owner, edges, parameter);
-                    AddParameterVariable(variableTypes, parameter, edges);
+                    AddParameterVariable(owner, variableTypes, parameter, edges);
                 }
                 break;
             case OperatorDeclarationSyntax op:
@@ -490,7 +511,7 @@ internal sealed class CodeGraphAnalyzer
                 foreach (var parameter in op.ParameterList.Parameters)
                 {
                     AddParameterEdges(owner, edges, parameter);
-                    AddParameterVariable(variableTypes, parameter, edges);
+                    AddParameterVariable(owner, variableTypes, parameter, edges);
                 }
                 break;
             case ConversionOperatorDeclarationSyntax conversion:
@@ -498,7 +519,7 @@ internal sealed class CodeGraphAnalyzer
                 foreach (var parameter in conversion.ParameterList.Parameters)
                 {
                     AddParameterEdges(owner, edges, parameter);
-                    AddParameterVariable(variableTypes, parameter, edges);
+                    AddParameterVariable(owner, variableTypes, parameter, edges);
                 }
                 break;
         }
@@ -511,7 +532,17 @@ internal sealed class CodeGraphAnalyzer
             }
 
             AddTypeEdges(owner, edges, local.Type, "uses_local_type");
-            AddLocalVariables(variableTypes, local, edges);
+            AddLocalVariables(owner, variableTypes, local, edges);
+        }
+
+        foreach (var foreachStatement in member.DescendantNodes().OfType<ForEachStatementSyntax>())
+        {
+            AddTypeEdges(owner, edges, foreachStatement.Type, "uses_local_type");
+            var reference = ChooseResolvableReference(foreachStatement.Type, edges, owner.Id);
+            if (reference is not null)
+            {
+                variableTypes[foreachStatement.Identifier.ValueText] = reference;
+            }
         }
 
         foreach (var creation in member.DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
@@ -524,11 +555,55 @@ internal sealed class CodeGraphAnalyzer
             AddTypeEdges(owner, edges, typeOf.Type, "typeof");
         }
 
+        foreach (var cast in member.DescendantNodes().OfType<CastExpressionSyntax>())
+        {
+            AddTypeEdges(owner, edges, cast.Type, "casts_to");
+        }
+
+        foreach (var binary in member.DescendantNodes().OfType<BinaryExpressionSyntax>())
+        {
+            if ((binary.IsKind(SyntaxKind.AsExpression) || binary.IsKind(SyntaxKind.IsExpression))
+                && binary.Right is TypeSyntax typeSyntax)
+            {
+                AddTypeEdges(owner, edges, typeSyntax, "type_check");
+            }
+        }
+
+        foreach (var pattern in member.DescendantNodes().OfType<DeclarationPatternSyntax>())
+        {
+            AddTypeEdges(owner, edges, pattern.Type, "type_check");
+            var reference = ChooseResolvableReference(pattern.Type, edges, owner.Id);
+            if (reference is not null && pattern.Designation is SingleVariableDesignationSyntax designation)
+            {
+                variableTypes[designation.Identifier.ValueText] = reference;
+            }
+        }
+
+        foreach (var assignment in member.DescendantNodes().OfType<AssignmentExpressionSyntax>())
+        {
+            if (!assignment.IsKind(SyntaxKind.SimpleAssignmentExpression))
+            {
+                continue;
+            }
+
+            var name = GetAssignableName(assignment.Left);
+            if (name is null)
+            {
+                continue;
+            }
+
+            var reference = InferReferenceFromInitializer(assignment.Right, edges, owner.Id);
+            if (reference is not null)
+            {
+                variableTypes[name] = reference;
+            }
+        }
+
         foreach (var invocation in member.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
             AnalyzeInvocation(owner, invocation, edges);
             AnalyzeMemberCall(owner, invocation, edges, variableTypes);
-            AnalyzeMethodCall(owner, currentMethod, invocation, methodResolver, methodEdges, variableTypes);
+            AnalyzeMethodCall(owner, currentMethod, invocation, edges, methodResolver, methodEdges, variableTypes);
         }
     }
 
@@ -573,27 +648,52 @@ internal sealed class CodeGraphAnalyzer
         }
     }
 
-    private static void AddParameterVariable(Dictionary<string, string> variableTypes, ParameterSyntax parameter, EdgeCollector edges)
+    private static string? GetAssignableName(ExpressionSyntax expression)
+    {
+        return expression switch
+        {
+            IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+            MemberAccessExpressionSyntax
+            {
+                Expression: ThisExpressionSyntax,
+                Name: IdentifierNameSyntax identifier
+            } => identifier.Identifier.ValueText,
+            _ => null
+        };
+    }
+
+    private static void AddConstraintEdges(TypeNode owner, EdgeCollector edges, SyntaxList<TypeParameterConstraintClauseSyntax> clauses)
+    {
+        foreach (var constraint in clauses)
+        {
+            foreach (var typeConstraint in constraint.Constraints.OfType<TypeConstraintSyntax>())
+            {
+                AddTypeEdges(owner, edges, typeConstraint.Type, "type_constraint");
+            }
+        }
+    }
+
+    private static void AddParameterVariable(TypeNode owner, Dictionary<string, string> variableTypes, ParameterSyntax parameter, EdgeCollector edges)
     {
         if (parameter.Type is null)
         {
             return;
         }
 
-        var reference = ChooseResolvableReference(parameter.Type, edges);
+        var reference = ChooseResolvableReference(parameter.Type, edges, owner.Id);
         if (reference is not null)
         {
             variableTypes[parameter.Identifier.ValueText] = reference;
         }
     }
 
-    private static void AddLocalVariables(Dictionary<string, string> variableTypes, VariableDeclarationSyntax local, EdgeCollector edges)
+    private static void AddLocalVariables(TypeNode owner, Dictionary<string, string> variableTypes, VariableDeclarationSyntax local, EdgeCollector edges)
     {
-        var explicitReference = ChooseResolvableReference(local.Type, edges);
+        var explicitReference = ChooseResolvableReference(local.Type, edges, owner.Id);
 
         foreach (var variable in local.Variables)
         {
-            var reference = explicitReference ?? InferReferenceFromInitializer(variable.Initializer?.Value, edges);
+            var reference = explicitReference ?? InferReferenceFromInitializer(variable.Initializer?.Value, edges, owner.Id);
             if (reference is not null)
             {
                 variableTypes[variable.Identifier.ValueText] = reference;
@@ -601,14 +701,35 @@ internal sealed class CodeGraphAnalyzer
         }
     }
 
-    private static string? InferReferenceFromInitializer(ExpressionSyntax? initializer, EdgeCollector edges)
+    private static string? InferReferenceFromInitializer(ExpressionSyntax? initializer, EdgeCollector edges, string sourceId)
     {
         return initializer switch
         {
-            ObjectCreationExpressionSyntax objectCreation => ChooseResolvableReference(objectCreation.Type, edges),
-            CastExpressionSyntax cast => ChooseResolvableReference(cast.Type, edges),
+            ObjectCreationExpressionSyntax objectCreation => ChooseResolvableReference(objectCreation.Type, edges, sourceId),
+            CastExpressionSyntax cast => ChooseResolvableReference(cast.Type, edges, sourceId),
+            BinaryExpressionSyntax binary when binary.IsKind(SyntaxKind.AsExpression) && binary.Right is TypeSyntax type => ChooseResolvableReference(type, edges, sourceId),
+            ParenthesizedExpressionSyntax parenthesized => InferReferenceFromInitializer(parenthesized.Expression, edges, sourceId),
+            InvocationExpressionSyntax invocation => InferReferenceFromInvocation(invocation, edges, sourceId),
             _ => null
         };
+    }
+
+    private static string? InferReferenceFromInvocation(InvocationExpressionSyntax invocation, EdgeCollector edges, string sourceId)
+    {
+        var call = GetGenericCall(invocation.Expression);
+        if (call is null || call.Value.TypeArguments.Count == 0)
+        {
+            return null;
+        }
+
+        if (!UnityGenericCalls.Contains(call.Value.Name) && call.Value.Name != "OfType")
+        {
+            return null;
+        }
+
+        return call.Value.TypeArguments
+            .Select(type => ChooseResolvableReference(type, edges, sourceId))
+            .FirstOrDefault(reference => reference is not null);
     }
 
     private static void AnalyzeMemberCall(
@@ -622,8 +743,9 @@ internal sealed class CodeGraphAnalyzer
             return;
         }
 
-        if (memberAccess.Expression is IdentifierNameSyntax receiver
-            && variableTypes.TryGetValue(receiver.Identifier.ValueText, out var targetReference))
+        var targetReference = ResolveReceiverType(memberAccess.Expression, variableTypes)
+            ?? ResolveTypeReceiver(memberAccess.Expression, edges, owner.Id);
+        if (targetReference is not null)
         {
             edges.Add(owner.Id, targetReference, "calls_member", invocation, owner.File);
         }
@@ -633,6 +755,7 @@ internal sealed class CodeGraphAnalyzer
         TypeNode owner,
         string? currentMethod,
         InvocationExpressionSyntax invocation,
+        EdgeCollector edges,
         MethodResolver methodResolver,
         MethodEdgeCollector methodEdges,
         IReadOnlyDictionary<string, string> variableTypes)
@@ -642,7 +765,7 @@ internal sealed class CodeGraphAnalyzer
             return;
         }
 
-        var target = ResolveMethodTarget(owner, invocation.Expression, methodResolver, variableTypes);
+        var target = ResolveMethodTarget(owner, invocation.Expression, edges, methodResolver, variableTypes);
         if (target is null || target == currentMethod)
         {
             return;
@@ -654,6 +777,7 @@ internal sealed class CodeGraphAnalyzer
     private static string? ResolveMethodTarget(
         TypeNode owner,
         ExpressionSyntax expression,
+        EdgeCollector edges,
         MethodResolver methodResolver,
         IReadOnlyDictionary<string, string> variableTypes)
     {
@@ -676,10 +800,16 @@ internal sealed class CodeGraphAnalyzer
                     return methodResolver.Resolve(owner.Id, methodName);
                 }
 
-                if (memberAccess.Expression is IdentifierNameSyntax receiver
-                    && variableTypes.TryGetValue(receiver.Identifier.ValueText, out var targetType))
+                var targetType = ResolveReceiverType(memberAccess.Expression, variableTypes);
+                if (targetType is not null)
                 {
                     return methodResolver.Resolve(targetType, methodName);
+                }
+
+                var staticTargetType = ResolveTypeReceiver(memberAccess.Expression, edges, owner.Id);
+                if (staticTargetType is not null)
+                {
+                    return methodResolver.Resolve(staticTargetType, methodName);
                 }
 
                 return null;
@@ -688,9 +818,47 @@ internal sealed class CodeGraphAnalyzer
         }
     }
 
-    private static string? ChooseResolvableReference(TypeSyntax type, EdgeCollector edges)
+    private static string? ResolveReceiverType(ExpressionSyntax receiver, IReadOnlyDictionary<string, string> variableTypes)
     {
-        return TypeReferenceExtractor.Extract(type).FirstOrDefault(edges.CanResolve);
+        return receiver switch
+        {
+            IdentifierNameSyntax identifier when variableTypes.TryGetValue(identifier.Identifier.ValueText, out var targetType) => targetType,
+            MemberAccessExpressionSyntax
+            {
+                Expression: ThisExpressionSyntax,
+                Name: IdentifierNameSyntax identifier
+            } when variableTypes.TryGetValue(identifier.Identifier.ValueText, out var targetType) => targetType,
+            MemberAccessExpressionSyntax
+            {
+                Expression: ThisExpressionSyntax,
+                Name: GenericNameSyntax generic
+            } when variableTypes.TryGetValue(generic.Identifier.ValueText, out var targetType) => targetType,
+            _ => null
+        };
+    }
+
+    private static string? ResolveTypeReceiver(ExpressionSyntax receiver, EdgeCollector edges, string sourceId)
+    {
+        return receiver switch
+        {
+            IdentifierNameSyntax identifier => edges.ResolveId(identifier.Identifier.ValueText, sourceId),
+            MemberAccessExpressionSyntax memberAccess => edges.ResolveId(memberAccess.ToString(), sourceId),
+            _ => null
+        };
+    }
+
+    private static string? ChooseResolvableReference(TypeSyntax type, EdgeCollector edges, string sourceId)
+    {
+        foreach (var reference in TypeReferenceExtractor.Extract(type))
+        {
+            var resolved = edges.ResolveId(reference, sourceId);
+            if (resolved is not null)
+            {
+                return resolved;
+            }
+        }
+
+        return null;
     }
 
     private static void AddTypeEdges(TypeNode owner, EdgeCollector edges, TypeSyntax type, string kind)
@@ -742,9 +910,10 @@ internal sealed class TypeNode
     public required string Kind { get; init; }
     public required string File { get; init; }
     public required int Line { get; init; }
+    public required List<string> Usings { get; init; }
     public required BaseTypeDeclarationSyntax Syntax { get; init; }
 
-    public static TypeNode FromSyntax(BaseTypeDeclarationSyntax syntax, SyntaxTree tree)
+    public static TypeNode FromSyntax(BaseTypeDeclarationSyntax syntax, SyntaxTree tree, CompilationUnitSyntax root)
     {
         var @namespace = GetNamespace(syntax);
         var name = GetNestedTypeName(syntax);
@@ -770,6 +939,7 @@ internal sealed class TypeNode
             Kind = kind,
             File = tree.FilePath,
             Line = lineSpan.StartLinePosition.Line + 1,
+            Usings = GetUsings(syntax, root),
             Syntax = syntax
         };
     }
@@ -834,24 +1004,53 @@ internal sealed class TypeNode
 
         return string.Join("+", names);
     }
+
+    private static List<string> GetUsings(BaseTypeDeclarationSyntax syntax, CompilationUnitSyntax root)
+    {
+        var fileUsings = root.Usings
+            .Where(u => u.Alias is null && !u.StaticKeyword.IsKind(SyntaxKind.StaticKeyword))
+            .Select(u => u.Name?.ToString())
+            .Where(name => !string.IsNullOrWhiteSpace(name));
+
+        var namespaceUsings = syntax.Ancestors()
+            .Where(a => a is NamespaceDeclarationSyntax or FileScopedNamespaceDeclarationSyntax)
+            .Reverse()
+            .SelectMany(a => a switch
+            {
+                NamespaceDeclarationSyntax namespaceDeclaration => namespaceDeclaration.Usings,
+                FileScopedNamespaceDeclarationSyntax fileScopedNamespace => fileScopedNamespace.Usings,
+                _ => Enumerable.Empty<UsingDirectiveSyntax>()
+            })
+            .Where(u => u is not null && u.Alias is null && !u.StaticKeyword.IsKind(SyntaxKind.StaticKeyword))
+            .Select(u => u!.Name?.ToString())
+            .Where(name => !string.IsNullOrWhiteSpace(name));
+
+        return fileUsings
+            .Concat(namespaceUsings)
+            .Distinct(StringComparer.Ordinal)
+            .Cast<string>()
+            .ToList();
+    }
 }
 
 internal sealed class TypeResolver
 {
     private readonly Dictionary<string, List<TypeNode>> _bySimpleName = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypeNode> _byFullName = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TypeNode> _contexts = new(StringComparer.Ordinal);
 
     public TypeResolver(IEnumerable<TypeNode> nodes)
     {
         foreach (var node in nodes)
         {
             _byFullName[node.Id] = node;
+            _contexts[node.Id] = node;
             AddSimple(node.Name.Split('+').Last(), node);
             AddSimple(node.Name, node);
         }
     }
 
-    public TypeNode? Resolve(string reference)
+    public TypeNode? Resolve(string reference, string? sourceId = null)
     {
         reference = CleanReference(reference);
         if (reference.Length == 0 || CodeGraphAnalyzer.IsPrimitive(reference))
@@ -862,6 +1061,15 @@ internal sealed class TypeResolver
         if (_byFullName.TryGetValue(reference, out var exact))
         {
             return exact;
+        }
+
+        if (sourceId is not null && _contexts.TryGetValue(sourceId, out var context))
+        {
+            var contextual = ResolveFromContext(reference, context);
+            if (contextual is not null)
+            {
+                return contextual;
+            }
         }
 
         var simpleName = reference.Split('.').Last().Split('+').Last();
@@ -878,6 +1086,11 @@ internal sealed class TypeResolver
         return Resolve(reference)?.Kind == "interface";
     }
 
+    public bool IsKnownInterface(string reference, string sourceId)
+    {
+        return Resolve(reference, sourceId)?.Kind == "interface";
+    }
+
     private void AddSimple(string name, TypeNode node)
     {
         if (!_bySimpleName.TryGetValue(name, out var list))
@@ -890,6 +1103,84 @@ internal sealed class TypeResolver
         {
             list.Add(node);
         }
+    }
+
+    private TypeNode? ResolveFromContext(string reference, TypeNode context)
+    {
+        foreach (var candidate in CandidateQualifiedNames(reference, context))
+        {
+            if (_byFullName.TryGetValue(candidate, out var exact))
+            {
+                return exact;
+            }
+
+            var nestedCandidate = ToNestedTypeName(candidate);
+            if (!string.Equals(nestedCandidate, candidate, StringComparison.Ordinal)
+                && _byFullName.TryGetValue(nestedCandidate, out var nested))
+            {
+                return nested;
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> CandidateQualifiedNames(string reference, TypeNode context)
+    {
+        foreach (var namespaceCandidate in NamespaceSearchOrder(context.Namespace))
+        {
+            yield return string.IsNullOrWhiteSpace(namespaceCandidate)
+                ? reference
+                : $"{namespaceCandidate}.{reference}";
+        }
+
+        foreach (var import in context.Usings)
+        {
+            yield return $"{import}.{reference}";
+        }
+    }
+
+    private static IEnumerable<string> NamespaceSearchOrder(string @namespace)
+    {
+        if (string.IsNullOrWhiteSpace(@namespace))
+        {
+            yield return string.Empty;
+            yield break;
+        }
+
+        var current = @namespace;
+        while (current.Length > 0)
+        {
+            yield return current;
+            var lastDot = current.LastIndexOf('.');
+            if (lastDot < 0)
+            {
+                break;
+            }
+
+            current = current[..lastDot];
+        }
+
+        yield return string.Empty;
+    }
+
+    private static string ToNestedTypeName(string reference)
+    {
+        var lastDot = reference.LastIndexOf('.');
+        if (lastDot < 0)
+        {
+            return reference;
+        }
+
+        var prefix = reference[..lastDot];
+        var suffix = reference[(lastDot + 1)..];
+        var prefixLastDot = prefix.LastIndexOf('.');
+        if (prefixLastDot < 0)
+        {
+            return $"{prefix}+{suffix}";
+        }
+
+        return $"{prefix[..prefixLastDot]}.{prefix[(prefixLastDot + 1)..]}+{suffix}";
     }
 
     private static string CleanReference(string reference)
@@ -1095,14 +1386,24 @@ internal sealed class EdgeCollector(TypeResolver resolver)
         return resolver.IsKnownInterface(reference);
     }
 
-    public bool CanResolve(string reference)
+    public bool IsKnownInterface(string reference, string sourceId)
     {
-        return resolver.Resolve(reference) is not null;
+        return resolver.IsKnownInterface(reference, sourceId);
+    }
+
+    public bool CanResolve(string reference, string sourceId)
+    {
+        return resolver.Resolve(reference, sourceId) is not null;
+    }
+
+    public string? ResolveId(string reference, string sourceId)
+    {
+        return resolver.Resolve(reference, sourceId)?.Id;
     }
 
     public void Add(string sourceId, string targetReference, string kind, SyntaxNode syntax, string file)
     {
-        var target = resolver.Resolve(targetReference);
+        var target = resolver.Resolve(targetReference, sourceId);
         if (target is null || target.Id == sourceId)
         {
             return;
