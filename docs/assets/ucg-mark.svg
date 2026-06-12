@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="Unity Code Graph mark">
+  <rect width="160" height="160" rx="36" fill="#111113"/>
+  <path d="M30 111 C56 52 103 33 137 48 C117 87 83 114 30 111Z" fill="#8dccff"/>
+  <circle cx="62" cy="62" r="12" fill="#f6f5f1"/>
+  <circle cx="100" cy="78" r="12" fill="#f6f5f1"/>
+  <circle cx="75" cy="112" r="12" fill="#f6f5f1"/>
+  <path d="M62 62 L100 78 L75 112 L62 62Z" fill="none" stroke="#111113" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M32 32 C39 49 47 56 64 64 C47 72 39 79 32 96 C25 79 17 72 0 64 C17 56 25 49 32 32Z" fill="#f6f5f1" transform="translate(15 13) scale(.72)"/>
+  <path d="M122 96 C128 109 135 116 148 122 C135 128 128 135 122 148 C116 135 109 128 96 122 C109 116 116 109 122 96Z" fill="#f6f5f1" transform="scale(.72) translate(38 38)"/>
+</svg>
