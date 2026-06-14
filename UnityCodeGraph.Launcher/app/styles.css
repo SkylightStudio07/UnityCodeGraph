@@ -420,9 +420,9 @@ input {
 
 .scanner-panel {
   display: grid;
-  gap: 13px;
+  gap: 11px;
   margin-left: 28px;
-  padding: 18px 18px 18px 20px;
+  padding: 16px 18px 18px 20px;
   animation: panelIn 560ms 260ms cubic-bezier(.18, .94, .2, 1) both;
 }
 
@@ -458,6 +458,60 @@ label span,
   display: grid;
   grid-template-columns: minmax(180px, 0.42fr) minmax(220px, 0.58fr);
   gap: 12px;
+}
+
+.quick-start {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quick-start div {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  border: 1px solid var(--ink);
+  padding: 6px 9px;
+  background:
+    linear-gradient(112deg, rgba(141, 204, 255, 0.24), transparent 58%),
+    rgba(255, 255, 255, 0.54);
+}
+
+.quick-start div::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 28px;
+  height: 16px;
+  background: var(--ink);
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+
+.quick-start strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 20px;
+  color: var(--paper);
+  background: var(--ink);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.quick-start span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .recent-panel {

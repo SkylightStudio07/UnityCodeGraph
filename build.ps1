@@ -16,6 +16,8 @@ $cliProject = Join-Path $root "UnityCodeGraph\UnityCodeGraph.csproj"
 $launcherProject = Join-Path $root "UnityCodeGraph.Launcher\UnityCodeGraph.Launcher.csproj"
 $publishScript = Join-Path $root "tools\publish-win.ps1"
 $verifyScript = Join-Path $root "tools\verify-analysis.ps1"
+$webSource = Join-Path $root "web"
+$distOutput = Join-Path $root "dist\UnityCodeGraph-$Runtime"
 
 if ($Release) {
     $Configuration = "Release"
@@ -40,6 +42,21 @@ function Assert-LastExitCode {
     if ($LASTEXITCODE -ne 0) {
         throw "$Name failed with exit code $LASTEXITCODE"
     }
+}
+
+function Sync-WebAssetsToDist {
+    $webOutput = Join-Path $distOutput "web"
+    if (-not (Test-Path $distOutput)) {
+        Write-Host "Skipped dist web sync; publish output does not exist yet: $distOutput"
+        return
+    }
+
+    if (Test-Path $webOutput) {
+        Remove-Item -LiteralPath $webOutput -Recurse -Force
+    }
+
+    Copy-Item -LiteralPath $webSource -Destination $webOutput -Recurse -Force
+    Write-Host "Synced web assets to $webOutput"
 }
 
 Push-Location $root
@@ -74,6 +91,10 @@ try {
         Invoke-Step "Build launcher ($Configuration)" {
             dotnet build $launcherProject -c $Configuration
             Assert-LastExitCode "Launcher build"
+        }
+
+        Invoke-Step "Sync web assets to dist" {
+            Sync-WebAssetsToDist
         }
     }
 

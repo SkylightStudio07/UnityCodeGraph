@@ -62,7 +62,29 @@ function Publish-Project {
     }
 }
 
+function Assert-LauncherNotRunning {
+    $launcherExe = Join-Path $output "UnityCodeGraphLauncher.exe"
+    if (-not (Test-Path $launcherExe)) {
+        return
+    }
+
+    $resolvedLauncher = (Resolve-Path $launcherExe).Path
+    $running = Get-Process UnityCodeGraphLauncher -ErrorAction SilentlyContinue | Where-Object {
+        try {
+            $_.Path -and $_.Path.Equals($resolvedLauncher, [StringComparison]::OrdinalIgnoreCase)
+        } catch {
+            $false
+        }
+    }
+
+    if ($running) {
+        $ids = ($running | Select-Object -ExpandProperty Id) -join ", "
+        throw "Close the running launcher before publishing. Locked file: $launcherExe (process id: $ids)"
+    }
+}
+
 Publish-Project $project
+Assert-LauncherNotRunning
 
 $launcherArguments = @(
     "publish",

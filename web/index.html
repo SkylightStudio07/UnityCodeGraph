@@ -37,13 +37,91 @@
           </label>
           <button id="exportLayoutButton" type="button" title="Export current layout state">Export Layout</button>
           <button id="sampleButton" type="button" title="Reload sample graph">Sample</button>
+          <button id="autoReloadButton" type="button" title="Reload graph JSON when it changes" aria-pressed="false">Auto Reload</button>
           <button id="pinModeButton" type="button" title="Keep the current relationship view while moving nodes" aria-pressed="false">Pin View</button>
+          <button id="aiSettingsButton" type="button" title="Configure AI provider" aria-expanded="false">AI</button>
+          <button id="languageSettingsButton" type="button" title="Choose AI response language" aria-expanded="false">Language</button>
           <button id="fitButton" type="button" title="Fit graph to view">Fit</button>
           <button id="resetButton" type="button" title="Reset filters and view">Reset</button>
         </div>
       </header>
 
+      <section id="aiSettingsPanel" class="ai-settings-panel" hidden>
+        <div class="settings-title-row">
+          <div>
+            <span class="settings-kicker">AI Command</span>
+            <h2>Provider Settings</h2>
+          </div>
+          <button id="aiSettingsCloseButton" type="button" title="Close AI settings">Close</button>
+        </div>
+        <div class="settings-grid">
+          <label>
+            <span>Provider</span>
+            <select id="aiProviderSelect">
+              <option value="disabled">Disabled</option>
+              <option value="openai">OpenAI</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="compatible">OpenAI Compatible</option>
+              <option value="ollama">Ollama</option>
+              <option value="vertex">Vertex AI</option>
+            </select>
+          </label>
+          <label>
+            <span>Base URL</span>
+            <input id="aiBaseUrlInput" type="url" spellcheck="false" />
+          </label>
+          <label>
+            <span>API Key</span>
+            <input id="aiApiKeyInput" type="password" autocomplete="off" placeholder="Paste only when changing keys" />
+          </label>
+          <label>
+            <span>Custom Model</span>
+            <input id="aiModelInput" type="text" spellcheck="false" />
+          </label>
+        </div>
+        <label class="settings-check">
+          <input id="aiSaveApiKeyInput" type="checkbox" checked />
+          <span>Remember API key on this Windows user profile</span>
+        </label>
+        <div class="model-picker">
+          <div class="model-picker-head">
+            <span>Models</span>
+            <button id="aiRefreshModelsButton" type="button">Refresh</button>
+          </div>
+          <div id="aiModelList" class="model-list"></div>
+        </div>
+        <div class="settings-footer">
+          <p id="aiSettingsStatus">AI settings are loaded from this launcher and optional local cache.</p>
+          <button id="aiSaveSettingsButton" type="button">Save AI</button>
+        </div>
+      </section>
+
+      <section id="languageSettingsPanel" class="language-settings-panel" hidden>
+        <div class="settings-title-row">
+          <div>
+            <span class="settings-kicker">Language Command</span>
+            <h2>Language Settings</h2>
+          </div>
+          <button id="languageSettingsCloseButton" type="button" title="Close language settings">Close</button>
+        </div>
+        <div class="language-options" role="group" aria-label="Language options">
+          <button type="button" data-language="en">English</button>
+          <button type="button" data-language="ko">한국어</button>
+        </div>
+        <p id="languageSettingsStatus">AI summaries will use the selected language.</p>
+      </section>
+
       <aside class="left-panel">
+        <section class="panel-section onboarding-panel">
+          <h2>Start Here</h2>
+          <ol class="onboarding-list">
+            <li><strong>Load</strong><span>Open graph JSON</span></li>
+            <li><strong>Inspect</strong><span>Select a type node</span></li>
+            <li><strong>Arrange</strong><span>Move nodes</span></li>
+          </ol>
+        </section>
+
         <section class="panel-section">
           <h2>Find</h2>
           <input id="searchInput" class="search-input" type="search" placeholder="Type or namespace" />
@@ -131,7 +209,10 @@
             <g id="nodesLayer"></g>
           </g>
         </svg>
-        <div id="emptyState" class="empty-state" hidden>No matching nodes</div>
+        <div id="emptyState" class="empty-state" hidden>
+          <strong id="emptyTitle">No matching nodes</strong>
+          <span id="emptyMessage">Clear the search or choose another filter.</span>
+        </div>
       </main>
 
       <aside class="right-panel">
@@ -144,6 +225,11 @@
         <section class="detail-card">
           <h2 id="secondaryTitle">Examples</h2>
           <div id="exampleList" class="examples"></div>
+        </section>
+
+        <section class="detail-card">
+          <h2>AI Summary</h2>
+          <div id="aiSummary" class="ai-summary"></div>
         </section>
 
         <section class="detail-card">
@@ -160,6 +246,23 @@
           <div id="flowList" class="flow-list"></div>
         </section>
       </aside>
+
+      <section id="explainDrawer" class="explain-drawer" hidden aria-label="AI explanation">
+        <div id="explainResizeHandle" class="explain-resize-handle" role="separator" aria-orientation="vertical" title="Drag to resize explanation"></div>
+        <header class="explain-header">
+          <div>
+            <span class="settings-kicker">AI Walkthrough</span>
+            <h2 id="explainTitle">Explanation</h2>
+            <p id="explainSubtitle">Code reading guide</p>
+          </div>
+          <div class="explain-actions">
+            <button id="explainExportButton" type="button">Export MD</button>
+            <button id="explainRegenerateButton" type="button">Regenerate</button>
+            <button id="explainCloseButton" type="button">Close</button>
+          </div>
+        </header>
+        <article id="explainContent" class="explain-content"></article>
+      </section>
     </div>
 
     <script src="./app.js"></script>

@@ -5,9 +5,9 @@
 <h1 align="center">Unity Code Graph</h1>
 
 <p align="center">
-  <strong>Unity/C#을 위한, 타입 및 호출 흐름 시각화 로컬 분석 도구</strong>
+  <strong>Unity/C#을 위한 타입 관계, 호출 흐름, AI 워크스루 로컬 분석 도구</strong>
   <br />
-  <em>당신의 프로젝트를 위한 스탠드얼론 도구</em>
+  <em>AI 키가 없어도 동작하고, 필요할 때만 코드 읽기 가이드를 생성합니다.</em>
 </p>
 
 <p align="center">
@@ -32,6 +32,8 @@
   ·
   <a href="#웹-뷰어">웹 뷰어</a>
   ·
+  <a href="#ai-워크스루">AI 워크스루</a>
+  ·
   <a href="#빌드와-퍼블리시">빌드</a>
   ·
   <a href="#분석-검증">검증</a>
@@ -45,6 +47,8 @@
 
 ![웹 뷰어](docs/screenshots/web-viewer.png)
 
+![AI 워크스루](docs/screenshots/web-viewer-ai-walkthrough3.png)
+
 ## 이것은 무엇인가요?
 
 Unity Code Graph는 Unity 프로젝트나 일반 C# 폴더를 스캔해서 `.cs` 파일 안의
@@ -52,9 +56,10 @@ Unity Code Graph는 Unity 프로젝트나 일반 C# 폴더를 스캔해서 `.cs`
 웹 뷰어에서 열 수 있고, 노드 위치를 직접 정리하거나 시스템 단위로 접어볼 수
 있습니다.
 
-현재 분석 패스는 의도적으로 AI를 사용하지 않습니다. C# 문법에서 기계적으로
-확인 가능한 관계를 추출하기 때문에 결과가 로컬에서 반복 가능하고 설명 가능한
-형태로 유지됩니다.
+기본 분석 패스는 AI를 사용하지 않습니다. C# 문법에서 기계적으로 확인 가능한
+관계를 추출하기 때문에 결과가 로컬에서 반복 가능하고 설명 가능한 형태로
+유지됩니다. AI 기능은 선택 사항이며, 설정한 provider API를 통해 노드나 시스템을
+읽는 순서를 설명하는 보조 기능으로만 동작합니다.
 
 ## 주요 기능
 
@@ -65,9 +70,10 @@ Unity Code Graph는 Unity 프로젝트나 일반 C# 폴더를 스캔해서 `.cs`
 | 관계 추출 | 상속, 구현, 필드, 프로퍼티, 파라미터, 지역 변수, 객체 생성, 캐스트, 타입 체크, 어트리뷰트 |
 | Unity 패턴 | `GetComponent<T>()`, `AddComponent<T>()`, `FindObjectOfType<T>()`, `CreateInstance<T>()` |
 | 호출 그래프 | 문법상 해석 가능한 메서드 호출과 타입 간 호출 요약 |
-| 웹 뷰어 | 시스템 클러스터, 시스템 리포트, 플로우 트레이스, Code Calls |
+| 웹 뷰어 | 시스템 클러스터, 시스템 리포트, 플로우 트레이스, Code Calls, 자동 리로드, 첫 실행 안내 |
+| AI 보조 | 노드 요약, 시스템 요약, 코드 읽기 워크스루, 근거 edge 표시, 워크스루 칩으로 그래프 점프 |
 | 레이아웃 | 노드 위치 저장, `Export Layout`, `Import Layout` |
-| 런처 | WebView2 GUI, 최근 프로젝트, watch 모드, 내장 로컬 서버 |
+| 런처 | WebView2 GUI, 최근 프로젝트, watch 모드, 내장 로컬 서버, AI provider 프록시 |
 
 ## 요구 사항
 
@@ -160,8 +166,36 @@ http://localhost:5173/web/
 - `Type View`로 타입 단위 관계 확인
 - `System View`로 시스템 카드 단위 확인
 - `Pin View`로 선택된 관계 뷰를 유지한 채 노드 위치 재배치
+- `Auto Reload`로 런처 watch 모드가 갱신한 그래프 JSON 자동 반영
 - `Export Layout` / `Import Layout`로 노드 위치, 필터, 뷰 모드, 줌 상태 이동
 - 노드를 선택해 상세 정보, 예시, 코드 호출 요약, 플로우 트레이스 확인
+
+## AI 워크스루
+
+![AI 워크스루](docs/screenshots/web-viewer-ai-walkthrough3.png)
+
+AI 기능은 선택 사항입니다. API 키가 없거나 요청이 실패해도 그래프 생성, 웹 뷰어,
+레이아웃 저장, 자동 리로드 같은 기본 기능은 그대로 사용할 수 있습니다.
+
+사용 방법:
+
+1. 런처에서 `Open Canvas`로 웹 뷰어를 엽니다.
+2. 우측 상단 `AI`를 눌러 provider, base URL, model, API key를 설정합니다.
+3. `Remember API key on this Windows user profile`을 켜고 `Save AI`를 누르면 API key가 현재 Windows 사용자 프로필에 저장됩니다.
+4. 노드나 좌측 `SYSTEMS`의 시스템을 선택한 뒤 `AI Walkthrough`를 실행합니다.
+5. 워크스루 패널의 `Reading Path` 아래 파란 칩을 누르면 해당 노드나 edge로 그래프가 이동하고 하이라이트됩니다.
+
+지원 provider:
+
+- OpenAI Responses API
+- OpenRouter / OpenAI-compatible Chat Completions
+- DeepSeek Chat Completions
+- Ollama local chat API
+- Vertex AI는 설정 슬롯만 있으며 실제 호출은 아직 구현 예정입니다.
+
+API key는 브라우저 localStorage, graph JSON, layout JSON에 저장하지 않습니다.
+저장을 선택하면 런처가 `AppData\Local\UnityCodeGraph\ai-settings.json`에 현재 Windows
+사용자 기준 DPAPI로 암호화한 값을 보관합니다.
 
 ## 빌드와 퍼블리시
 
@@ -170,6 +204,9 @@ http://localhost:5173/web/
 ```powershell
 .\build.bat
 ```
+
+기존 `dist\UnityCodeGraph-win-x64\`가 있으면 최신 웹뷰어 파일도 함께 동기화됩니다.
+실행 파일을 새로 퍼블리시하려면 `-Publish`를 사용하세요.
 
 Release 빌드 체크:
 
@@ -182,6 +219,9 @@ Windows 번들과 zip 생성:
 ```powershell
 .\build.bat -Release -Publish -Zip
 ```
+
+퍼블리시 중인 런처 실행 파일이 이미 열려 있으면 덮어쓸 수 없습니다. 이 경우
+`UnityCodeGraphLauncher.exe`를 닫고 다시 실행하세요.
 
 생성 위치:
 
