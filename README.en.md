@@ -14,6 +14,8 @@
   <a href="README.md">한국어</a>
   ·
   <a href="README.en.md"><strong>English</strong></a>
+  ·
+  <a href="https://github.com/SkylightStudio07/UnityCodeGraph/releases">Latest Release</a>
 </p>
 
 <p align="center">
@@ -83,6 +85,11 @@ already extracted graph data.
 
 ## Quick Start
 
+- Latest releases are available here:  
+https://github.com/SkylightStudio07/UnityCodeGraph/releases
+
+---
+
 Build everything and run JavaScript syntax checks:
 
 ```powershell
@@ -108,6 +115,8 @@ dotnet run --project .\UnityCodeGraph -- <path-to-unity-project> --roots Scripts
 ```
 
 ## Launcher
+
+![Launcher](docs/screenshots/launcher.png)
 
 Run the launcher from source:
 
@@ -145,7 +154,9 @@ Then open:
 http://localhost:5173/web/
 ```
 
-In the viewer:
+### Viewer Usage
+
+![Pinned node view](docs/screenshots/web-viewer-pinned-node.png)
 
 - Use `Load JSON` to open a generated graph file.
 - Use `Type View` for type-level inspection.

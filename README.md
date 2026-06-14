@@ -14,6 +14,8 @@
   <a href="README.md"><strong>한국어</strong></a>
   ·
   <a href="README.en.md">English</a>
+    ·
+  <a href="https://github.com/SkylightStudio07/UnityCodeGraph/releases">Latest Release</a>
 </p>
 
 <p align="center">
