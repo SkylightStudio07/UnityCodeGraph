@@ -193,12 +193,16 @@ Supported providers:
 - OpenRouter / OpenAI-compatible Chat Completions
 - DeepSeek Chat Completions
 - Ollama local chat API
-- Vertex AI has a settings slot, but request support is still planned
+- Vertex AI with Project ID, location, service account JSON, or `GOOGLE_APPLICATION_CREDENTIALS`
+
+For Vertex `Location = global`, use `https://aiplatform.googleapis.com` as the base URL.
+Regional locations such as `us-central1` call `https://us-central1-aiplatform.googleapis.com` by default.
 
 API keys are not stored in browser localStorage, graph JSON, or layout JSON.
 When key saving is enabled, the launcher writes
 `AppData\Local\UnityCodeGraph\ai-settings.json` with the key encrypted through
-Windows DPAPI for the current user profile.
+Windows DPAPI for the current user profile. Vertex service account JSON is stored
+the same way only when that option is enabled.
 
 ## Build And Publish
 

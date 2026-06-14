@@ -193,11 +193,15 @@ AI 기능은 선택 사항입니다. API 키가 없거나 요청이 실패해도
 - OpenRouter / OpenAI-compatible Chat Completions
 - DeepSeek Chat Completions
 - Ollama local chat API
-- Vertex AI는 설정 슬롯만 있으며 실제 호출은 아직 구현 예정입니다.
+- Vertex AI: Project ID, location, service account JSON 또는 `GOOGLE_APPLICATION_CREDENTIALS` 사용
+
+Vertex에서 `Location`을 `global`로 쓰는 경우 base URL은 `https://aiplatform.googleapis.com`을 사용합니다.
+지역 location 예: `us-central1`은 기본 설정에서 `https://us-central1-aiplatform.googleapis.com`으로 호출됩니다.
 
 API key는 브라우저 localStorage, graph JSON, layout JSON에 저장하지 않습니다.
 저장을 선택하면 런처가 `AppData\Local\UnityCodeGraph\ai-settings.json`에 현재 Windows
-사용자 기준 DPAPI로 암호화한 값을 보관합니다.
+사용자 기준 DPAPI로 암호화한 값을 보관합니다. Vertex 서비스 계정 JSON도 같은 저장
+옵션을 사용할 때만 암호화해 보관합니다.
 
 ## 빌드와 퍼블리시
 

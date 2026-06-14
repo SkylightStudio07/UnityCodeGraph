@@ -760,7 +760,14 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
 
     private sealed record HttpRequest(string Method, string Path, string Body);
 
-    private sealed record AiRuntimeConfig(string Provider, string BaseUrl, string ApiKey, string Model)
+    private sealed record AiRuntimeConfig(
+        string Provider,
+        string BaseUrl,
+        string ApiKey,
+        string Model,
+        string VertexProjectId = "",
+        string VertexLocation = "",
+        string VertexServiceAccountJson = "")
     {
         public static AiRuntimeConfig FromEnvironment()
         {
@@ -799,7 +806,14 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
         }
     }
 
-    private sealed record AiSettingsFile(string Provider, string BaseUrl, string Model, string ProtectedApiKey);
+    private sealed record AiSettingsFile(
+        string Provider,
+        string BaseUrl,
+        string Model,
+        string ProtectedApiKey,
+        string VertexProjectId = "",
+        string VertexLocation = "",
+        string ProtectedVertexServiceAccountJson = "");
 
     private static string AiSettingsPath
         => Path.Combine(
@@ -831,7 +845,15 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
             }
 
             var apiKey = UnprotectSecret(settings.ProtectedApiKey);
-            return new AiRuntimeConfig(settings.Provider, settings.BaseUrl, apiKey, settings.Model);
+            var vertexJson = UnprotectSecret(settings.ProtectedVertexServiceAccountJson);
+            return new AiRuntimeConfig(
+                settings.Provider,
+                settings.BaseUrl,
+                apiKey,
+                settings.Model,
+                settings.VertexProjectId,
+                settings.VertexLocation,
+                vertexJson);
         }
         catch (Exception exception)
         {
@@ -849,7 +871,10 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
                 config.Provider,
                 config.BaseUrl,
                 config.Model,
-                ProtectSecret(config.ApiKey));
+                ProtectSecret(config.ApiKey),
+                config.VertexProjectId,
+                config.VertexLocation,
+                ProtectSecret(config.VertexServiceAccountJson));
             File.WriteAllText(AiSettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
             return true;
         }
@@ -895,7 +920,14 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
         var provider = NormalizeProvider(config.Provider);
         var baseUrl = string.IsNullOrWhiteSpace(config.BaseUrl) ? DefaultBaseUrl(provider) : config.BaseUrl.Trim();
         var model = string.IsNullOrWhiteSpace(config.Model) ? DefaultModel(provider) : config.Model.Trim();
-        return new AiRuntimeConfig(provider, baseUrl.TrimEnd('/'), config.ApiKey.Trim(), model);
+        var vertexJson = config.VertexServiceAccountJson.Trim();
+        var vertexProjectId = config.VertexProjectId.Trim();
+        if (provider == "vertex" && string.IsNullOrWhiteSpace(vertexProjectId) && !string.IsNullOrWhiteSpace(vertexJson))
+        {
+            vertexProjectId = VertexProjectIdFromServiceAccount(vertexJson) ?? "";
+        }
+        var vertexLocation = string.IsNullOrWhiteSpace(config.VertexLocation) ? "us-central1" : config.VertexLocation.Trim();
+        return new AiRuntimeConfig(provider, baseUrl.TrimEnd('/'), config.ApiKey.Trim(), model, vertexProjectId, vertexLocation, vertexJson);
     }
 
     private static string NormalizeProvider(string? provider)
@@ -920,6 +952,7 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
             "deepseek" => DefaultDeepSeekBaseUrl,
             "compatible" => DefaultOpenAiBaseUrl,
             "ollama" => DefaultOllamaBaseUrl,
+            "vertex" => "https://aiplatform.googleapis.com",
             _ => ""
         };
 
@@ -931,7 +964,7 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
             "deepseek" => DefaultDeepSeekModel,
             "compatible" => DefaultOpenAiModel,
             "ollama" => "qwen3-coder",
-            "vertex" => "gemini-3.5-flash",
+            "vertex" => "gemini-3-flash-preview",
             _ => ""
         };
 
@@ -941,12 +974,6 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
         if (config.Provider == "disabled")
         {
             reason = "AI provider is disabled";
-            return false;
-        }
-
-        if (config.Provider == "vertex")
-        {
-            reason = "Vertex provider is planned but not implemented yet";
             return false;
         }
 
@@ -971,6 +998,27 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
                 _ => "OPENAI_API_KEY is not set"
             };
             return false;
+        }
+
+        if (config.Provider == "vertex")
+        {
+            if (string.IsNullOrWhiteSpace(config.VertexProjectId))
+            {
+                reason = "Vertex Project ID is not set";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(config.VertexLocation))
+            {
+                reason = "Vertex location is not set";
+                return false;
+            }
+
+            if (!HasVertexCredentials(config))
+            {
+                reason = "Vertex service account JSON or GOOGLE_APPLICATION_CREDENTIALS is not set";
+                return false;
+            }
         }
 
         return true;
@@ -999,6 +1047,9 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
             model = config.Model,
             baseUrl = config.BaseUrl,
             apiKeyConfigured = !string.IsNullOrWhiteSpace(config.ApiKey),
+            vertexProjectId = config.VertexProjectId,
+            vertexLocation = config.VertexLocation,
+            vertexCredentialsConfigured = HasVertexCredentials(config),
             apiKeyStored = File.Exists(AiSettingsPath),
             modelSuggestions = ModelSuggestions(config.Provider),
             reason
@@ -1030,6 +1081,14 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
             var normalizedProvider = NormalizeProvider(provider);
             var baseUrl = JsonString(root, "baseUrl", string.IsNullOrWhiteSpace(current.BaseUrl) ? DefaultBaseUrl(normalizedProvider) : current.BaseUrl);
             var model = JsonString(root, "model", string.IsNullOrWhiteSpace(current.Model) ? DefaultModel(normalizedProvider) : current.Model);
+            var vertexProjectId = JsonString(root, "vertexProjectId", current.VertexProjectId);
+            var vertexLocation = JsonString(root, "vertexLocation", string.IsNullOrWhiteSpace(current.VertexLocation) ? "us-central1" : current.VertexLocation);
+            var hasVertexJsonInput = root.TryGetProperty("vertexServiceAccountJson", out var vertexJsonElement) && vertexJsonElement.ValueKind == JsonValueKind.String;
+            var vertexJson = hasVertexJsonInput
+                ? vertexJsonElement.GetString() ?? ""
+                : normalizedProvider.Equals(current.Provider, StringComparison.OrdinalIgnoreCase)
+                    ? current.VertexServiceAccountJson
+                    : "";
             var hasApiKeyInput = root.TryGetProperty("apiKey", out var apiKeyElement) && apiKeyElement.ValueKind == JsonValueKind.String;
             var saveApiKey = root.TryGetProperty("saveApiKey", out var saveApiKeyElement)
                 && saveApiKeyElement.ValueKind == JsonValueKind.True;
@@ -1052,7 +1111,7 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
                 apiKey = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY")?.Trim() ?? "";
             }
 
-            var next = NormalizeAiConfig(new AiRuntimeConfig(normalizedProvider, baseUrl, apiKey, model));
+            var next = NormalizeAiConfig(new AiRuntimeConfig(normalizedProvider, baseUrl, apiKey, model, vertexProjectId, vertexLocation, vertexJson));
             lock (AiConfigLock)
             {
                 AiConfig = next;
@@ -1077,6 +1136,9 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
             baseUrl = config.BaseUrl,
             model = config.Model,
             apiKeyConfigured = !string.IsNullOrWhiteSpace(config.ApiKey),
+            vertexProjectId = config.VertexProjectId,
+            vertexLocation = config.VertexLocation,
+            vertexCredentialsConfigured = HasVertexCredentials(config),
             apiKeyStored = File.Exists(AiSettingsPath),
             saved,
             reason,
@@ -1144,7 +1206,7 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
                 "qwen/qwen3.7-max"
             },
             "ollama" => new[] { "qwen3-coder", "gpt-oss", "gemma4", "deepseek-r1", "qwen3.6", "llama4", "glm-4.7-flash" },
-            "vertex" => new[] { "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash" },
+            "vertex" => new[] { "gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro" },
             _ => Array.Empty<string>()
         };
 
@@ -1228,6 +1290,7 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
                 "deepseek" => await RequestOpenAiCompatibleChatAsync(config, enrichedBody, instruction, schemaName, workflow),
                 "compatible" => await RequestOpenAiCompatibleChatAsync(config, enrichedBody, instruction, schemaName, workflow),
                 "ollama" => await RequestOllamaChatAsync(config, enrichedBody, instruction, workflow),
+                "vertex" => await RequestVertexGenerateContentAsync(config, enrichedBody, instruction, workflow),
                 _ => ""
             };
             if (string.IsNullOrWhiteSpace(outputText))
@@ -1723,6 +1786,184 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
         request.Headers.TryAddWithoutValidation("X-OpenRouter-Title", "Unity Code Graph");
     }
 
+    private static async Task<string> RequestVertexGenerateContentAsync(AiRuntimeConfig config, string payload, string instruction, bool workflow)
+    {
+        var accessToken = await RequestVertexAccessTokenAsync(config);
+        var schemaPrompt = $"\n\nExpected JSON shape:\n{JsonObjectSchemaPrompt(workflow)}";
+        var requestPayload = new
+        {
+            systemInstruction = new
+            {
+                parts = new[]
+                {
+                    new { text = AiSystemPrompt }
+                }
+            },
+            contents = new[]
+            {
+                new
+                {
+                    role = "user",
+                    parts = new[]
+                    {
+                        new { text = $"{instruction}{schemaPrompt}\n\nPayload:\n{payload}\n\nReturn exactly one valid JSON object. Do not use markdown." }
+                    }
+                }
+            },
+            generationConfig = new
+            {
+                temperature = 0.2,
+                maxOutputTokens = workflow ? 4096 : 900,
+                responseMimeType = "application/json"
+            }
+        };
+
+        var endpoint = VertexGenerateContentEndpoint(config);
+        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        request.Content = new StringContent(JsonSerializer.Serialize(requestPayload, JsonOptions), Encoding.UTF8, "application/json");
+        using var response = await AiHttp.SendAsync(request);
+        var responseText = await response.Content.ReadAsStringAsync();
+        EnsureAiSuccess(response, responseText);
+        return ExtractVertexOutputText(responseText);
+    }
+
+    private static string VertexGenerateContentEndpoint(AiRuntimeConfig config)
+    {
+        var baseUrl = config.BaseUrl.TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl) || baseUrl.Equals("https://aiplatform.googleapis.com", StringComparison.OrdinalIgnoreCase))
+        {
+            baseUrl = config.VertexLocation.Equals("global", StringComparison.OrdinalIgnoreCase)
+                ? "https://aiplatform.googleapis.com"
+                : $"https://{config.VertexLocation}-aiplatform.googleapis.com";
+        }
+        else if (baseUrl.Contains("{location}", StringComparison.OrdinalIgnoreCase))
+        {
+            baseUrl = baseUrl.Replace("{location}", config.VertexLocation, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var model = config.Model.Trim().TrimStart('/');
+        var modelPath = model.StartsWith("projects/", StringComparison.OrdinalIgnoreCase)
+            ? model
+            : model.StartsWith("publishers/", StringComparison.OrdinalIgnoreCase)
+                ? $"projects/{Uri.EscapeDataString(config.VertexProjectId)}/locations/{Uri.EscapeDataString(config.VertexLocation)}/{model}"
+                : $"projects/{Uri.EscapeDataString(config.VertexProjectId)}/locations/{Uri.EscapeDataString(config.VertexLocation)}/publishers/google/models/{Uri.EscapeDataString(model)}";
+        return $"{baseUrl}/v1/{modelPath}:generateContent";
+    }
+
+    private static async Task<string> RequestVertexAccessTokenAsync(AiRuntimeConfig config)
+    {
+        var credentialsJson = VertexCredentialsJson(config);
+        var credentials = ParseVertexServiceAccount(credentialsJson);
+        var tokenUri = string.IsNullOrWhiteSpace(credentials.TokenUri)
+            ? "https://oauth2.googleapis.com/token"
+            : credentials.TokenUri;
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var header = Base64Url(JsonSerializer.SerializeToUtf8Bytes(new { alg = "RS256", typ = "JWT" }));
+        var claims = Base64Url(JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            iss = credentials.ClientEmail,
+            scope = "https://www.googleapis.com/auth/cloud-platform",
+            aud = tokenUri,
+            iat = now,
+            exp = now + 3600
+        }));
+        var signingInput = $"{header}.{claims}";
+
+        using var rsa = RSA.Create();
+        rsa.ImportFromPem(credentials.PrivateKey);
+        var signature = rsa.SignData(Encoding.UTF8.GetBytes(signingInput), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        var assertion = $"{signingInput}.{Base64Url(signature)}";
+
+        using var response = await AiHttp.PostAsync(tokenUri, new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["grant_type"] = "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            ["assertion"] = assertion
+        }));
+        var responseText = await response.Content.ReadAsStringAsync();
+        EnsureAiSuccess(response, responseText);
+
+        using var document = JsonDocument.Parse(responseText);
+        if (document.RootElement.TryGetProperty("access_token", out var token) && token.ValueKind == JsonValueKind.String)
+        {
+            return token.GetString() ?? "";
+        }
+
+        throw new AiRequestException("Vertex token response did not contain access_token");
+    }
+
+    private static bool HasVertexCredentials(AiRuntimeConfig config)
+    {
+        if (!string.IsNullOrWhiteSpace(config.VertexServiceAccountJson))
+        {
+            return true;
+        }
+
+        var path = Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS")?.Trim();
+        return !string.IsNullOrWhiteSpace(path) && File.Exists(path);
+    }
+
+    private static string VertexCredentialsJson(AiRuntimeConfig config)
+    {
+        if (!string.IsNullOrWhiteSpace(config.VertexServiceAccountJson))
+        {
+            return config.VertexServiceAccountJson;
+        }
+
+        var path = Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS")?.Trim();
+        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+        {
+            return File.ReadAllText(path);
+        }
+
+        throw new AiRequestException("Vertex credentials were not found");
+    }
+
+    private sealed record VertexServiceAccount(string ClientEmail, string PrivateKey, string TokenUri, string ProjectId);
+
+    private static VertexServiceAccount ParseVertexServiceAccount(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            var clientEmail = JsonString(root, "client_email", "");
+            var privateKey = JsonString(root, "private_key", "");
+            var tokenUri = JsonString(root, "token_uri", "https://oauth2.googleapis.com/token");
+            var projectId = JsonString(root, "project_id", "");
+            if (string.IsNullOrWhiteSpace(clientEmail) || string.IsNullOrWhiteSpace(privateKey))
+            {
+                throw new AiRequestException("Vertex service account JSON must include client_email and private_key");
+            }
+
+            return new VertexServiceAccount(clientEmail, privateKey, tokenUri, projectId);
+        }
+        catch (JsonException exception)
+        {
+            throw new AiRequestException($"Vertex service account JSON is invalid: {exception.Message}");
+        }
+    }
+
+    private static string? VertexProjectIdFromServiceAccount(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var projectId = JsonString(document.RootElement, "project_id", "");
+            return string.IsNullOrWhiteSpace(projectId) ? null : projectId;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string Base64Url(byte[] bytes)
+        => Convert.ToBase64String(bytes)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+
     private static async Task<string> RequestOllamaChatAsync(AiRuntimeConfig config, string payload, string instruction, bool workflow)
     {
         var requestPayload = new
@@ -1964,6 +2205,42 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
         if (root.TryGetProperty("response", out var response) && response.ValueKind == JsonValueKind.String)
         {
             return response.GetString() ?? "";
+        }
+
+        return "";
+    }
+
+    private static string ExtractVertexOutputText(string responseText)
+    {
+        using var document = JsonDocument.Parse(responseText);
+        var root = document.RootElement;
+        if (!root.TryGetProperty("candidates", out var candidates) || candidates.ValueKind != JsonValueKind.Array)
+        {
+            return "";
+        }
+
+        foreach (var candidate in candidates.EnumerateArray())
+        {
+            if (!candidate.TryGetProperty("content", out var content)
+                || !content.TryGetProperty("parts", out var parts)
+                || parts.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            var builder = new StringBuilder();
+            foreach (var part in parts.EnumerateArray())
+            {
+                if (part.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String)
+                {
+                    builder.Append(text.GetString());
+                }
+            }
+
+            if (builder.Length > 0)
+            {
+                return builder.ToString();
+            }
         }
 
         return "";

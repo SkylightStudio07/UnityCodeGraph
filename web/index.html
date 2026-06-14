@@ -71,7 +71,7 @@
             <span>Base URL</span>
             <input id="aiBaseUrlInput" type="url" spellcheck="false" />
           </label>
-          <label>
+          <label class="ai-api-key-field">
             <span>API Key</span>
             <input id="aiApiKeyInput" type="password" autocomplete="off" placeholder="Paste only when changing keys" />
           </label>
@@ -80,9 +80,32 @@
             <input id="aiModelInput" type="text" spellcheck="false" />
           </label>
         </div>
+        <div id="vertexSettings" class="vertex-settings">
+          <div class="settings-grid">
+            <label>
+              <span>Project ID</span>
+              <input id="vertexProjectIdInput" type="text" spellcheck="false" placeholder="my-gcp-project" />
+            </label>
+            <label>
+              <span>Location</span>
+              <input id="vertexLocationInput" type="text" spellcheck="false" placeholder="us-central1" />
+            </label>
+          </div>
+          <label class="settings-textarea-field">
+            <span>Service Account JSON</span>
+            <textarea id="vertexServiceAccountInput" spellcheck="false" placeholder="Paste service account JSON or import a .json file"></textarea>
+          </label>
+          <div class="settings-inline-actions">
+            <label class="file-button">
+              Import JSON
+              <input id="vertexServiceAccountFileInput" type="file" accept=".json,application/json" />
+            </label>
+            <span>Or set GOOGLE_APPLICATION_CREDENTIALS before launching.</span>
+          </div>
+        </div>
         <label class="settings-check">
           <input id="aiSaveApiKeyInput" type="checkbox" checked />
-          <span>Remember API key on this Windows user profile</span>
+          <span>Remember API key or Vertex credentials on this Windows user profile</span>
         </label>
         <div class="model-picker">
           <div class="model-picker-head">

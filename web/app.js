@@ -59,8 +59,8 @@ const AI_PROVIDER_PRESETS = {
     models: ["qwen3-coder", "gpt-oss", "gemma4", "deepseek-r1", "qwen3.6", "llama4", "glm-4.7-flash"]
   },
   vertex: {
-    baseUrl: "",
-    models: ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash"]
+    baseUrl: "https://aiplatform.googleapis.com",
+    models: ["gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"]
   }
 };
 
@@ -131,12 +131,17 @@ const state = {
     baseUrl: "",
     apiKeyConfigured: false,
     apiKeyStored: false,
+    vertexProjectId: "",
+    vertexLocation: "",
+    vertexCredentialsConfigured: false,
     reason: "AI status has not been checked yet."
   },
   aiConfig: {
     provider: "disabled",
     baseUrl: "",
-    model: ""
+    model: "",
+    vertexProjectId: "",
+    vertexLocation: "us-central1"
   },
   aiModels: [],
   aiSettingsOpen: false,
@@ -185,6 +190,11 @@ const els = {
   aiBaseUrl: document.getElementById("aiBaseUrlInput"),
   aiApiKey: document.getElementById("aiApiKeyInput"),
   aiSaveApiKey: document.getElementById("aiSaveApiKeyInput"),
+  vertexSettings: document.getElementById("vertexSettings"),
+  vertexProjectId: document.getElementById("vertexProjectIdInput"),
+  vertexLocation: document.getElementById("vertexLocationInput"),
+  vertexServiceAccount: document.getElementById("vertexServiceAccountInput"),
+  vertexServiceAccountFile: document.getElementById("vertexServiceAccountFileInput"),
   aiModel: document.getElementById("aiModelInput"),
   aiModelList: document.getElementById("aiModelList"),
   aiRefreshModels: document.getElementById("aiRefreshModelsButton"),
@@ -255,13 +265,17 @@ function loadSavedAiConfig() {
     state.aiConfig = {
       provider,
       baseUrl: saved.baseUrl ?? preset.baseUrl ?? fallback.baseUrl,
-      model: saved.model ?? preset.models?.[0] ?? ""
+      model: saved.model ?? preset.models?.[0] ?? "",
+      vertexProjectId: saved.vertexProjectId ?? "",
+      vertexLocation: saved.vertexLocation ?? "us-central1"
     };
   } catch {
     state.aiConfig = {
       provider: "disabled",
       baseUrl: fallback.baseUrl,
-      model: ""
+      model: "",
+      vertexProjectId: "",
+      vertexLocation: "us-central1"
     };
   }
   state.aiModels = providerPreset(state.aiConfig.provider).models ?? [];
@@ -291,6 +305,9 @@ async function loadAiStatus() {
       baseUrl: "",
       apiKeyConfigured: false,
       apiKeyStored: false,
+      vertexProjectId: "",
+      vertexLocation: "",
+      vertexCredentialsConfigured: false,
       reason: "Open through the launcher to check AI status."
     };
     return;
@@ -313,12 +330,17 @@ async function loadAiStatus() {
       baseUrl: status.baseUrl || "",
       apiKeyConfigured: Boolean(status.apiKeyConfigured),
       apiKeyStored: Boolean(status.apiKeyStored),
+      vertexProjectId: status.vertexProjectId || "",
+      vertexLocation: status.vertexLocation || "",
+      vertexCredentialsConfigured: Boolean(status.vertexCredentialsConfigured),
       reason: status.reason || ""
     };
     state.aiConfig = {
       provider: state.aiStatus.provider || state.aiConfig.provider,
       baseUrl: state.aiStatus.baseUrl || state.aiConfig.baseUrl,
-      model: state.aiStatus.model || state.aiConfig.model
+      model: state.aiStatus.model || state.aiConfig.model,
+      vertexProjectId: state.aiStatus.vertexProjectId || state.aiConfig.vertexProjectId,
+      vertexLocation: state.aiStatus.vertexLocation || state.aiConfig.vertexLocation
     };
     state.aiModels = uniqueModels([state.aiConfig.model, ...(status.modelSuggestions ?? []), ...state.aiModels]);
   } catch (error) {
@@ -331,6 +353,9 @@ async function loadAiStatus() {
       baseUrl: "",
       apiKeyConfigured: false,
       apiKeyStored: false,
+      vertexProjectId: "",
+      vertexLocation: "",
+      vertexCredentialsConfigured: false,
       reason: "AI status endpoint is unavailable."
     };
   } finally {
@@ -422,7 +447,9 @@ function bindEvents() {
     state.aiConfig = {
       provider,
       baseUrl: preset.baseUrl ?? "",
-      model: preset.models?.[0] ?? ""
+      model: preset.models?.[0] ?? "",
+      vertexProjectId: state.aiConfig.vertexProjectId || "",
+      vertexLocation: state.aiConfig.vertexLocation || "us-central1"
     };
     state.aiModels = preset.models ?? [];
     renderAiSettings();
@@ -433,6 +460,23 @@ function bindEvents() {
   els.aiModel.addEventListener("input", () => {
     state.aiConfig.model = els.aiModel.value.trim();
     renderAiModelList();
+  });
+  els.vertexProjectId.addEventListener("input", () => {
+    state.aiConfig.vertexProjectId = els.vertexProjectId.value.trim();
+  });
+  els.vertexLocation.addEventListener("input", () => {
+    state.aiConfig.vertexLocation = els.vertexLocation.value.trim();
+  });
+  els.vertexServiceAccountFile.addEventListener("change", async () => {
+    const file = els.vertexServiceAccountFile.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    els.vertexServiceAccount.value = text;
+    fillVertexProjectFromJson(text);
+    els.vertexServiceAccountFile.value = "";
+  });
+  els.vertexServiceAccount.addEventListener("input", () => {
+    fillVertexProjectFromJson(els.vertexServiceAccount.value, false);
   });
   els.aiRefreshModels.addEventListener("click", refreshAiModels);
   els.aiSaveSettings.addEventListener("click", saveAiSettings);
@@ -549,9 +593,12 @@ function renderAiSettings() {
   els.aiSettingsPanel.hidden = !state.aiSettingsOpen;
   els.aiSettingsButton.classList.toggle("is-active", state.aiSettingsOpen);
   els.aiSettingsButton.setAttribute("aria-expanded", String(state.aiSettingsOpen));
+  els.aiSettingsPanel.classList.toggle("is-vertex-provider", state.aiConfig.provider === "vertex");
   els.aiProvider.value = state.aiConfig.provider || "disabled";
   els.aiBaseUrl.value = state.aiConfig.baseUrl || "";
   els.aiModel.value = state.aiConfig.model || "";
+  els.vertexProjectId.value = state.aiConfig.vertexProjectId || "";
+  els.vertexLocation.value = state.aiConfig.vertexLocation || "us-central1";
   els.aiSaveApiKey.checked = state.aiStatus.apiKeyStored || els.aiSaveApiKey.checked;
   els.aiSettingsStatus.textContent = aiSettingsStatusText();
   renderAiModelList();
@@ -593,9 +640,10 @@ function renderAiModelList() {
 function aiSettingsStatusText() {
   if (!state.aiStatus.checked) return "Checking AI status.";
   if (state.aiStatus.enabled) {
+    const secretName = state.aiStatus.provider === "vertex" ? "Vertex credentials" : "API key";
     const keyState = state.aiStatus.apiKeyStored
-      ? "API key is remembered in this Windows user profile."
-      : "API key is active for this launcher session.";
+      ? `${secretName} are remembered in this Windows user profile.`
+      : `${secretName} are active for this launcher session.`;
     return `${state.aiStatus.provider || "AI"} / ${state.aiStatus.model || "model"} is ready. ${keyState}`;
   }
   return state.aiStatus.reason || "AI is not configured.";
@@ -621,7 +669,9 @@ async function saveAiSettings(options = {}) {
   state.aiConfig = {
     provider: els.aiProvider.value,
     baseUrl: els.aiBaseUrl.value.trim(),
-    model: els.aiModel.value.trim()
+    model: els.aiModel.value.trim(),
+    vertexProjectId: els.vertexProjectId.value.trim(),
+    vertexLocation: els.vertexLocation.value.trim()
   };
 
   localStorage.setItem(AI_CONFIG_STORAGE_KEY, JSON.stringify(state.aiConfig));
@@ -639,6 +689,9 @@ async function saveAiSettings(options = {}) {
   if (els.aiApiKey.value.trim()) {
     payload.apiKey = els.aiApiKey.value.trim();
   }
+  if (state.aiConfig.provider === "vertex" && els.vertexServiceAccount.value.trim()) {
+    payload.vertexServiceAccountJson = els.vertexServiceAccount.value.trim();
+  }
 
   try {
     const response = await fetch("/ai/config", {
@@ -649,11 +702,12 @@ async function saveAiSettings(options = {}) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `AI config failed (${response.status})`);
     els.aiApiKey.value = "";
+    els.vertexServiceAccount.value = "";
     await loadAiStatus();
     state.aiModels = uniqueModels([state.aiConfig.model, ...(data.modelSuggestions ?? []), ...state.aiModels]);
     if (!options.quiet) {
       els.aiSettingsStatus.textContent = data.enabled
-        ? `${data.provider} / ${data.model} is ready.${data.saved ? " API key remembered." : ""}`
+        ? `${data.provider} / ${data.model} is ready.${data.saved ? " Secret remembered." : ""}`
         : data.reason || "AI settings saved, but provider is not ready.";
     }
     renderDetails();
@@ -666,6 +720,19 @@ async function saveAiSettings(options = {}) {
 
 function uniqueModels(models) {
   return [...new Set(models.map(model => String(model ?? "").trim()).filter(Boolean))];
+}
+
+function fillVertexProjectFromJson(text, overwrite = true) {
+  if (!text.trim()) return;
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed?.project_id && (overwrite || !els.vertexProjectId.value.trim())) {
+      els.vertexProjectId.value = parsed.project_id;
+      state.aiConfig.vertexProjectId = parsed.project_id;
+    }
+  } catch {
+    // Keep free-form paste editing quiet until Save AI validates it server-side.
+  }
 }
 
 async function loadSampleGraph() {

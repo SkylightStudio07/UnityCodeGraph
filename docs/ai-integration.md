@@ -68,7 +68,10 @@ provider/model/base URL은 브라우저 localStorage에 저장할 수 있지만,
 - `deepseek`: DeepSeek Chat Completions (`/chat/completions`)
 - `compatible`: OpenAI-compatible Chat Completions (`/chat/completions`)
 - `ollama`: Ollama local chat API (`/api/chat`)
-- `vertex`: 설정 슬롯만 제공, 실제 호출은 추후 구현
+- `vertex`: Vertex AI Gemini `generateContent`. Project ID, location, service account JSON,
+  또는 `GOOGLE_APPLICATION_CREDENTIALS`를 사용한다.
+  `global` location은 `https://aiplatform.googleapis.com` endpoint를 사용하고,
+  regional location은 `{location}-aiplatform.googleapis.com` endpoint를 사용한다.
 
 런처 서버 endpoint:
 
