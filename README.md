@@ -72,7 +72,7 @@ Unity Code Graph는 Unity 프로젝트나 일반 C# 폴더를 스캔해서 `.cs`
 | 관계 추출 | 상속, 구현, 필드, 프로퍼티, 파라미터, 지역 변수, 객체 생성, 캐스트, 타입 체크, 어트리뷰트 |
 | Unity 패턴 | `GetComponent<T>()`, `AddComponent<T>()`, `FindObjectOfType<T>()`, `CreateInstance<T>()` |
 | 호출 그래프 | 문법상 해석 가능한 메서드 호출과 타입 간 호출 요약 |
-| 웹 뷰어 | 시스템 클러스터, 시스템 리포트, 플로우 트레이스, Code Calls, 자동 리로드, 첫 실행 안내 |
+| 웹 뷰어 | 시스템 클러스터, 시스템 리포트, 플로우 트레이스, Code Calls, 자동 리로드, 첫 실행 안내, AI 컨텍스트 MD/JSON export |
 | AI 보조 | 노드 요약, 시스템 요약, 코드 읽기 워크스루, 근거 edge 표시, 워크스루 칩으로 그래프 점프 |
 | 레이아웃 | 노드 위치 저장, `Export Layout`, `Import Layout` |
 | 런처 | WebView2 GUI, 최근 프로젝트, watch 모드, 내장 로컬 서버, AI provider 프록시 |
@@ -170,6 +170,7 @@ http://localhost:5173/web/
 - `Pin View`로 선택된 관계 뷰를 유지한 채 노드 위치 재배치
 - `Auto Reload`로 런처 watch 모드가 갱신한 그래프 JSON 자동 반영
 - `Export Layout` / `Import Layout`로 노드 위치, 필터, 뷰 모드, 줌 상태 이동
+- `Short / Standard / Detailed Context`로 분량을 고른 뒤 `Export AI Context`로 시스템별 읽기 순서와 근거가 담긴 Markdown/JSON 컨텍스트 생성
 - 노드를 선택해 상세 정보, 예시, 코드 호출 요약, 플로우 트레이스 확인
 
 ## AI 워크스루

@@ -36,6 +36,16 @@
             Import Layout
           </label>
           <button id="exportLayoutButton" type="button" title="Export current layout state">Export Layout</button>
+          <select id="aiContextQualitySelect" class="toolbar-select" title="AI context export detail level">
+            <option value="short">Short Context</option>
+            <option value="standard" selected>Standard Context</option>
+            <option value="detailed">Detailed Context</option>
+          </select>
+          <select id="aiContextFormatSelect" class="toolbar-select" title="AI context export format">
+            <option value="markdown">MD Only</option>
+            <option value="markdown-json" selected>MD + JSON</option>
+          </select>
+          <button id="exportAiContextButton" type="button" title="Export graph-derived Markdown and JSON context for AI tools">Export AI Context</button>
           <button id="sampleButton" type="button" title="Reload sample graph">Sample</button>
           <button id="autoReloadButton" type="button" title="Reload graph JSON when it changes" aria-pressed="false">Auto Reload</button>
           <button id="pinModeButton" type="button" title="Keep the current relationship view while moving nodes" aria-pressed="false">Pin View</button>

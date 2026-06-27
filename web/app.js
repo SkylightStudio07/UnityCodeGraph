@@ -17,6 +17,50 @@ const AUTO_RELOAD_INTERVAL_MS = 2500;
 const LANGUAGE_STORAGE_KEY = "UnityCodeGraph:language";
 const AI_CONFIG_STORAGE_KEY = "UnityCodeGraph:ai-config";
 const AI_CACHE_VERSION = 2;
+const AI_CONTEXT_QUALITY = {
+  short: {
+    label: "Short",
+    maxSystems: 10,
+    maxTypes: 5,
+    maxEntries: 4,
+    maxFlows: 3,
+    maxFlowSteps: 5,
+    maxRelationships: 6,
+    maxMethodCalls: 6,
+    maxEvidence: 5,
+    maxPayloadTypes: 10,
+    maxPayloadRelationships: 8,
+    maxPayloadMethodCalls: 8
+  },
+  standard: {
+    label: "Standard",
+    maxSystems: 24,
+    maxTypes: 8,
+    maxEntries: 8,
+    maxFlows: 4,
+    maxFlowSteps: 8,
+    maxRelationships: 16,
+    maxMethodCalls: 16,
+    maxEvidence: 8,
+    maxPayloadTypes: 28,
+    maxPayloadRelationships: 16,
+    maxPayloadMethodCalls: 16
+  },
+  detailed: {
+    label: "Detailed",
+    maxSystems: 80,
+    maxTypes: 24,
+    maxEntries: 16,
+    maxFlows: 8,
+    maxFlowSteps: 12,
+    maxRelationships: 36,
+    maxMethodCalls: 36,
+    maxEvidence: 16,
+    maxPayloadTypes: 96,
+    maxPayloadRelationships: 48,
+    maxPayloadMethodCalls: 48
+  }
+};
 const AI_PROVIDER_PRESETS = {
   disabled: {
     baseUrl: "",
@@ -175,6 +219,9 @@ const els = {
   file: document.getElementById("fileInput"),
   layoutFile: document.getElementById("layoutInput"),
   exportLayout: document.getElementById("exportLayoutButton"),
+  aiContextQuality: document.getElementById("aiContextQualitySelect"),
+  aiContextFormat: document.getElementById("aiContextFormatSelect"),
+  exportAiContext: document.getElementById("exportAiContextButton"),
   sample: document.getElementById("sampleButton"),
   autoReload: document.getElementById("autoReloadButton"),
   pinMode: document.getElementById("pinModeButton"),
@@ -396,6 +443,7 @@ function bindEvents() {
   });
 
   els.exportLayout.addEventListener("click", exportViewState);
+  els.exportAiContext.addEventListener("click", exportAiContext);
   els.sample.addEventListener("click", loadSampleGraph);
   els.autoReload.addEventListener("click", () => {
     if (!state.graphUrl) return;
@@ -1117,6 +1165,310 @@ function safeFileName(value) {
     .replace(/[^a-z0-9._-]+/gi, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80) || "code-graph";
+}
+
+function exportAiContext() {
+  if (!state.graph) {
+    window.alert("Load a graph JSON before exporting AI context.");
+    return;
+  }
+
+  const context = buildAiContextData();
+  const markdown = buildAiContextMarkdown(context);
+  const label = safeFileName(state.graphLabel || state.graph.RootPath || "code-graph");
+  downloadTextFile(`${label}-ai-context.md`, markdown.join("\n"), "text/markdown;charset=utf-8");
+
+  if (els.aiContextFormat.value === "markdown-json") {
+    window.setTimeout(() => {
+      downloadTextFile(`${label}-ai-context.json`, JSON.stringify(context, null, 2), "application/json;charset=utf-8");
+    }, 100);
+  }
+}
+
+function buildAiContextData() {
+  const graph = state.graph;
+  const quality = selectedAiContextQuality();
+  const clusters = [...(graph.SystemClusters ?? [])]
+    .sort((a, b) =>
+      (b.NodeCount ?? b.NodeIds?.length ?? 0) - (a.NodeCount ?? a.NodeIds?.length ?? 0) ||
+      (b.InternalEdges ?? 0) - (a.InternalEdges ?? 0) ||
+      a.Name.localeCompare(b.Name)
+    )
+    .slice(0, quality.maxSystems);
+
+  return {
+    schemaVersion: 1,
+    generator: "Unity Code Graph",
+    generatedAt: new Date().toISOString(),
+    language: state.language,
+    quality: quality.key,
+    limits: {
+      maxSystems: quality.maxSystems,
+      maxTypes: quality.maxTypes,
+      maxEntries: quality.maxEntries,
+      maxFlows: quality.maxFlows,
+      maxFlowSteps: quality.maxFlowSteps,
+      maxRelationships: quality.maxRelationships,
+      maxMethodCalls: quality.maxMethodCalls,
+      maxEvidence: quality.maxEvidence
+    },
+    instructions: [
+      "Treat graph relationships and evidence references as extracted facts.",
+      "Treat role estimates and likely flows as heuristics, not as semantic compiler results.",
+      "Use this context to decide which files, types, and methods to inspect first.",
+      "Ask for source files when evidence is insufficient instead of inventing implementation details."
+    ],
+    graph: {
+      source: graph.RootPath || state.graphLabel || "unknown",
+      label: state.graphLabel || "",
+      nodeCount: graph.Nodes?.length ?? 0,
+      edgeCount: graph.Edges?.length ?? 0,
+      methodCount: graph.Methods?.length ?? 0,
+      methodEdgeCount: graph.MethodEdges?.length ?? 0,
+      systemCount: graph.SystemClusters?.length ?? 0,
+      exportedSystemCount: clusters.length,
+      omittedSystemCount: Math.max(0, (graph.SystemClusters?.length ?? 0) - clusters.length)
+    },
+    systems: clusters.map(cluster => buildSystemAiContextData(cluster, quality)),
+    notes: [
+      "This context intentionally omits full source code. Use the listed files and methods as a reading map.",
+      "If a system looks wrong, regenerate the graph after updating analyzer rules or changing system grouping.",
+      "Cached AI walkthroughs are not included in this deterministic export."
+    ]
+  };
+}
+
+function selectedAiContextQuality() {
+  const key = Object.hasOwn(AI_CONTEXT_QUALITY, els.aiContextQuality.value)
+    ? els.aiContextQuality.value
+    : "standard";
+  return { key, ...AI_CONTEXT_QUALITY[key] };
+}
+
+function buildSystemAiContextData(cluster, quality) {
+  const payload = buildSystemAiPayload(cluster, {
+    maxTypes: quality.maxPayloadTypes,
+    maxRelationships: quality.maxPayloadRelationships,
+    maxMethodCalls: quality.maxPayloadMethodCalls,
+    maxEntries: quality.maxEntries,
+    maxEvidence: quality.maxEvidence
+  });
+  const report = payload.report ?? buildSystemReport(cluster);
+  const systemSlug = safeFileName(cluster.Name).toLowerCase();
+
+  return {
+    id: cluster.Id,
+    name: cluster.Name,
+    anchor: `systems/${systemSlug}.md`,
+    stats: {
+      nodeCount: payload.system.nodeCount,
+      internalEdges: payload.system.internalEdges,
+      externalEdges: payload.system.externalEdges,
+      entryMethodCount: payload.system.entryMethodCount,
+      keywords: payload.system.keywords ?? []
+    },
+    roleEstimate: report.role || "",
+    startHere: (report.entries ?? []).slice(0, quality.maxEntries),
+    coreTypes: (report.mainTypes ?? []).slice(0, quality.maxTypes),
+    likelyFlows: (report.flows ?? []).slice(0, quality.maxFlows).map(flow => ({
+      entry: flow.entry,
+      steps: (flow.steps ?? []).slice(0, quality.maxFlowSteps)
+    })),
+    types: (payload.types ?? []).slice(0, quality.maxTypes),
+    relationships: {
+      internal: (payload.relationships?.internal ?? []).slice(0, quality.maxRelationships),
+      external: (payload.relationships?.external ?? []).slice(0, quality.maxRelationships)
+    },
+    methodCalls: {
+      internal: (payload.methodCalls?.internal ?? []).slice(0, quality.maxMethodCalls)
+    },
+    evidence: (payload.evidence ?? []).slice(0, quality.maxEvidence),
+    suggestedAiTask: `Use the ${cluster.Name} context above to explain the reading order, likely runtime flow, and risky assumptions. Cite method names, relationship edges, and file references when possible.`
+  };
+}
+
+function buildAiContextMarkdown(context) {
+  const graph = context.graph;
+  const lines = [
+    "# Unity Code Graph AI Context",
+    "",
+    "This file is generated from the local Unity Code Graph analysis. It is intended to be pasted into an AI coding assistant as compact project context.",
+    "",
+    "## Instructions For AI",
+    ""
+  ];
+  for (const instruction of context.instructions) {
+    lines.push(`- ${instruction}`);
+  }
+  lines.push(
+    `- Preferred response language: ${context.language === "ko" ? "Korean" : "English"}.`,
+    "",
+    "## Graph Summary",
+    "",
+    `- Source: ${markdownInlineCode(graph.source)}`,
+    `- Quality: ${markdownInlineCode(context.quality)}`,
+    `- Types: ${graph.nodeCount}`,
+    `- Relationships: ${graph.edgeCount}`,
+    `- Methods: ${graph.methodCount}`,
+    `- Method calls: ${graph.methodEdgeCount}`,
+    `- Systems: ${graph.exportedSystemCount}${graph.omittedSystemCount ? ` exported / ${graph.omittedSystemCount} omitted` : ""}`,
+    `- Exported: ${context.generatedAt}`,
+    "",
+    "## System Index",
+    "",
+    "| System | Types | Internal | External | Entry Candidates |",
+    "| --- | ---: | ---: | ---: | ---: |"
+  );
+
+  if (!context.systems.length) {
+    lines.push("| Full Graph | 0 | 0 | 0 | 0 |", "");
+    return lines;
+  }
+
+  for (const system of context.systems) {
+    lines.push(`| ${[
+      markdownTableCell(system.name),
+      system.stats.nodeCount,
+      system.stats.internalEdges,
+      system.stats.externalEdges,
+      system.stats.entryMethodCount
+    ].join(" | ")} |`);
+  }
+
+  lines.push("");
+  for (const system of context.systems) {
+    appendSystemAiContextMarkdown(lines, system);
+  }
+
+  lines.push(
+    "## Notes",
+    "",
+    ...context.notes.map(note => `- ${note}`),
+    ""
+  );
+  return lines;
+}
+
+function appendSystemAiContextMarkdown(lines, system) {
+  lines.push(
+    `## System: ${system.name}`,
+    "",
+    `Anchor: ${markdownInlineCode(system.anchor)}`,
+    "",
+    "### Role Estimate",
+    "",
+    system.roleEstimate || "No role estimate available.",
+    "",
+    "### Stats",
+    "",
+    `- Types: ${system.stats.nodeCount}`,
+    `- Internal relationships: ${system.stats.internalEdges}`,
+    `- External relationships: ${system.stats.externalEdges}`,
+    `- Entry candidates: ${system.stats.entryMethodCount}`,
+    `- Keywords: ${(system.stats.keywords ?? []).length ? (system.stats.keywords ?? []).map(markdownInlineCode).join(", ") : "none"}`,
+    ""
+  );
+
+  appendAiContextList(lines, "### Start Here", system.startHere, item =>
+    `${markdownInlineCode(item.name)} - ${item.detail}`
+  );
+  appendAiContextList(lines, "### Core Types", system.coreTypes, item =>
+    `${markdownInlineCode(item.name)} - ${item.detail}`
+  );
+  appendAiContextFlows(lines, system.likelyFlows);
+  appendAiContextRelationships(lines, "### Internal Type Relationships", system.relationships.internal);
+  appendAiContextRelationships(lines, "### External Touchpoints", system.relationships.external);
+  appendAiContextMethodCalls(lines, system.methodCalls.internal);
+  appendAiContextEvidence(lines, system.evidence);
+  lines.push(
+    "### Suggested AI Task",
+    "",
+    system.suggestedAiTask,
+    ""
+  );
+}
+
+function appendAiContextList(lines, title, items, formatter) {
+  lines.push(title, "");
+  if (!Array.isArray(items) || !items.length) {
+    lines.push("- None detected.", "");
+    return;
+  }
+  for (const item of items.slice(0, 12)) {
+    lines.push(`- ${formatter(item)}`);
+  }
+  lines.push("");
+}
+
+function appendAiContextFlows(lines, flows) {
+  lines.push("### Likely Method Flows", "");
+  if (!Array.isArray(flows) || !flows.length) {
+    lines.push("- No internal method flow detected.", "");
+    return;
+  }
+  for (const flow of flows.slice(0, 6)) {
+    lines.push(`- ${markdownInlineCode(flow.entry)}`);
+    for (const step of (flow.steps ?? []).slice(0, 8)) {
+      lines.push(`  - ${markdownInlineCode(step)}`);
+    }
+  }
+  lines.push("");
+}
+
+function appendAiContextRelationships(lines, title, relationships) {
+  lines.push(title, "");
+  if (!Array.isArray(relationships) || !relationships.length) {
+    lines.push("- None detected.", "");
+    return;
+  }
+  for (const edge of relationships.slice(0, 16)) {
+    const source = edge.sourceName || shortTypeId(edge.source);
+    const target = edge.targetName || shortTypeId(edge.target);
+    const direction = edge.direction ? `${edge.direction} / ` : "";
+    lines.push(`- ${markdownInlineCode(source)} -> ${markdownInlineCode(target)} - ${direction}${formatKind(edge.kind)} / ${edge.weight ?? 1} refs`);
+    if (edge.example) lines.push(`  - Evidence: ${markdownInlineCode(exampleLabel(edge.example))}`);
+  }
+  lines.push("");
+}
+
+function appendAiContextMethodCalls(lines, calls) {
+  lines.push("### Internal Method Calls", "");
+  if (!Array.isArray(calls) || !calls.length) {
+    lines.push("- None detected.", "");
+    return;
+  }
+  for (const call of calls.slice(0, 16)) {
+    const source = `${shortTypeId(call.sourceType)}.${call.source}`;
+    const target = `${shortTypeId(call.targetType)}.${call.target}`;
+    lines.push(`- ${markdownInlineCode(source)} -> ${markdownInlineCode(target)} / ${call.weight ?? 1} refs`);
+    if (call.example) lines.push(`  - Evidence: ${markdownInlineCode(exampleLabel(call.example))}`);
+  }
+  lines.push("");
+}
+
+function appendAiContextEvidence(lines, evidence) {
+  lines.push("### Evidence", "");
+  if (!Array.isArray(evidence) || !evidence.length) {
+    lines.push("- No evidence rows generated.", "");
+    return;
+  }
+  for (const item of evidence.slice(0, 10)) {
+    lines.push(`- ${item.title || "Evidence"} - ${item.detail || ""}`);
+    if (item.example) lines.push(`  - ${markdownInlineCode(exampleLabel(item.example))}`);
+  }
+  lines.push("");
+}
+
+function markdownInlineCode(value) {
+  const text = String(value ?? "").replaceAll("`", "\\`").replace(/\s+/g, " ").trim();
+  return `\`${text || "unknown"}\``;
+}
+
+function markdownTableCell(value) {
+  return String(value ?? "")
+    .replaceAll("|", "\\|")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function countRestorablePositions(saved) {
@@ -2532,7 +2884,7 @@ function buildNodeAiPayload(node) {
   };
 }
 
-function buildSystemAiPayload(cluster) {
+function buildSystemAiPayload(cluster, limits = {}) {
   const graph = state.graph;
   const nodes = graph?.Nodes ?? [];
   const edges = graph?.Edges ?? [];
@@ -2542,12 +2894,17 @@ function buildSystemAiPayload(cluster) {
   const methodById = new Map(methods.map(method => [method.Id, method]));
   const clusterIds = new Set(cluster.NodeIds ?? []);
   const report = buildSystemReport(cluster);
+  const maxTypes = limits.maxTypes ?? 28;
+  const maxRelationships = limits.maxRelationships ?? 16;
+  const maxMethodCalls = limits.maxMethodCalls ?? 16;
+  const maxEntries = limits.maxEntries ?? 10;
+  const maxEvidence = limits.maxEvidence ?? 8;
 
   const clusterNodes = [...clusterIds]
     .map(id => nodeById.get(id))
     .filter(Boolean)
     .sort((a, b) => a.Name.localeCompare(b.Name))
-    .slice(0, 28)
+    .slice(0, maxTypes)
     .map(node => ({
       id: node.Id,
       name: node.Name,
@@ -2561,12 +2918,12 @@ function buildSystemAiPayload(cluster) {
   const internalRelationships = edges
     .filter(edge => clusterIds.has(edge.Source) && clusterIds.has(edge.Target))
     .sort(edgePayloadSort)
-    .slice(0, 16)
+    .slice(0, maxRelationships)
     .map(edge => relationshipPayload(edge, "both", nodeById));
   const externalRelationships = edges
     .filter(edge => clusterIds.has(edge.Source) !== clusterIds.has(edge.Target))
     .sort(edgePayloadSort)
-    .slice(0, 16)
+    .slice(0, maxRelationships)
     .map(edge => ({
       ...relationshipPayload(edge, "both", nodeById),
       direction: clusterIds.has(edge.Source) ? "outgoing" : "incoming"
@@ -2575,12 +2932,12 @@ function buildSystemAiPayload(cluster) {
     .map(edge => ({ edge, source: methodById.get(edge.Source), target: methodById.get(edge.Target) }))
     .filter(item => item.source && item.target && clusterIds.has(item.source.TypeId) && clusterIds.has(item.target.TypeId))
     .sort(callSummarySort)
-    .slice(0, 16)
+    .slice(0, maxMethodCalls)
     .map(item => methodCallPayload(item, "both"));
   const entryMethods = (cluster.EntryMethodIds ?? [])
     .map(id => methodById.get(id))
     .filter(Boolean)
-    .slice(0, 10)
+    .slice(0, maxEntries)
     .map(method => ({
       id: method.Id,
       typeId: method.TypeId,
@@ -2589,7 +2946,7 @@ function buildSystemAiPayload(cluster) {
       file: method.File || "",
       line: method.Line || 0
     }));
-  const evidence = systemEvidence(cluster, internalRelationships, externalRelationships, internalCalls, report);
+  const evidence = systemEvidence(cluster, internalRelationships, externalRelationships, internalCalls, report, maxEvidence);
 
   return {
     schemaVersion: 1,
@@ -2622,9 +2979,9 @@ function buildSystemAiPayload(cluster) {
     },
     evidence,
     limits: {
-      maxSentTypes: 28,
-      maxSentRelationships: 16,
-      maxSentMethodCalls: 16
+      maxSentTypes: maxTypes,
+      maxSentRelationships: maxRelationships,
+      maxSentMethodCalls: maxMethodCalls
     }
   };
 }
@@ -2704,7 +3061,7 @@ function nodeEvidence(node, outgoing, incoming, outgoingCalls, incomingCalls) {
   return rows.slice(0, 8);
 }
 
-function systemEvidence(cluster, internalRelationships, externalRelationships, internalCalls, report) {
+function systemEvidence(cluster, internalRelationships, externalRelationships, internalCalls, report, maxEvidence = 8) {
   const rows = [];
   for (const flow of (report.flows ?? []).slice(0, 2)) {
     rows.push({
@@ -2726,7 +3083,7 @@ function systemEvidence(cluster, internalRelationships, externalRelationships, i
       example: edge.example
     });
   }
-  for (const edge of internalRelationships.slice(0, Math.max(0, 8 - rows.length))) {
+  for (const edge of internalRelationships.slice(0, Math.max(0, maxEvidence - rows.length))) {
     rows.push({
       title: `Internal ${formatKind(edge.kind)}`,
       detail: relationEvidenceDetail(edge),
@@ -2739,7 +3096,7 @@ function systemEvidence(cluster, internalRelationships, externalRelationships, i
       detail: `${cluster.Name} contains ${cluster.NodeCount ?? (cluster.NodeIds ?? []).length} related types.`
     });
   }
-  return rows.slice(0, 8);
+  return rows.slice(0, maxEvidence);
 }
 
 function relationEvidenceDetail(edge) {

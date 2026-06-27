@@ -71,7 +71,7 @@ already extracted graph data.
 | Relationships | Inheritance, implementation, fields, properties, parameters, locals, creation, casts, type checks, attributes |
 | Unity patterns | `GetComponent<T>()`, `AddComponent<T>()`, `FindObjectOfType<T>()`, `CreateInstance<T>()` |
 | Call graph | Syntax-resolved method calls and type-level call summaries |
-| Web viewer | System clusters, system reports, flow traces, Code Calls, auto reload, first-run guidance |
+| Web viewer | System clusters, system reports, flow traces, Code Calls, auto reload, first-run guidance, AI context Markdown/JSON export |
 | AI assistant | Node summaries, system summaries, code reading walkthroughs, evidence edges, graph-jump chips |
 | Layout | Saved positions, `Export Layout`, `Import Layout` |
 | Launcher | WebView2 GUI, recent projects, watch mode, built-in local server, AI provider proxy |
@@ -165,6 +165,9 @@ http://localhost:5173/web/
 - Use `Auto Reload` to pick up graph JSON updates from launcher watch mode.
 - Use `Export Layout` and `Import Layout` to move saved positions, filters, view
   mode, and zoom state between browsers or machines.
+- Choose `Short / Standard / Detailed Context`, then use `Export AI Context` to
+  generate Markdown/JSON context with system reading paths and evidence for
+  external AI coding tools.
 - Select a node to see details, examples, code call summaries, and flow traces.
 
 ## AI Walkthrough

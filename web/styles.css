@@ -160,7 +160,8 @@ h1 {
 }
 
 button,
-.file-button {
+.file-button,
+.toolbar-select {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -177,15 +178,23 @@ button,
 }
 
 .topbar button,
-.topbar .file-button {
+.topbar .file-button,
+.topbar .toolbar-select {
   color: var(--paper);
   background: var(--ink);
 }
 
 button:hover,
-.file-button:hover {
+.file-button:hover,
+.toolbar-select:hover {
   color: var(--ink);
   background: var(--blue);
+}
+
+.toolbar-select {
+  min-width: 132px;
+  max-width: 172px;
+  appearance: none;
 }
 
 button:disabled {
