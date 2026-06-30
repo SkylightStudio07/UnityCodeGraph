@@ -102,6 +102,9 @@ internal sealed class LauncherForm : Form
                 case "watch":
                     await RunParserAsync(GetSettings(root), watch: true);
                     break;
+                case "enhanceContext":
+                    await EnhanceAiContextAsync(GetSettings(root));
+                    break;
                 case "stop":
                     StopParser();
                     break;
@@ -113,6 +116,31 @@ internal sealed class LauncherForm : Form
         catch (Exception ex)
         {
             Log($"Error: {ex.Message}");
+        }
+    }
+
+    private async Task EnhanceAiContextAsync(LauncherSettings settings)
+    {
+        if (_parserProcess is not null)
+        {
+            Log("Stop the parser before enhancing AI context.");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.OutputPath))
+        {
+            Log("Choose an output JSON path first.");
+            return;
+        }
+
+        Send("runningChanged", new { running = true, mode = "enhance" });
+        try
+        {
+            await CanvasServer.EnhanceAiContextAsync(settings.OutputPath, settings.EnhanceScope, settings.EnhanceSystem, Log);
+        }
+        finally
+        {
+            Send("runningChanged", new { running = false });
         }
     }
 
@@ -363,7 +391,9 @@ internal sealed class LauncherForm : Form
         return new LauncherSettings(
             GetString(root, "projectPath"),
             GetString(root, "roots"),
-            GetString(root, "outputPath"));
+            GetString(root, "outputPath"),
+            GetString(root, "enhanceScope"),
+            GetString(root, "enhanceSystem"));
     }
 
     private static string GetString(JsonElement root, string name)
@@ -412,14 +442,16 @@ internal sealed class LauncherForm : Form
     {
         if (_webView.CoreWebView2 is null)
         {
-            return new LauncherSettings(string.Empty, string.Empty, Path.Combine(Environment.CurrentDirectory, "code-graph.json"));
+            return new LauncherSettings(string.Empty, string.Empty, Path.Combine(Environment.CurrentDirectory, "code-graph.json"), "all", string.Empty);
         }
 
         var json = await _webView.CoreWebView2.ExecuteScriptAsync("""
             JSON.stringify({
               projectPath: document.querySelector("#projectPath")?.value ?? "",
               roots: document.querySelector("#roots")?.value ?? "",
-              outputPath: document.querySelector("#outputPath")?.value ?? ""
+              outputPath: document.querySelector("#outputPath")?.value ?? "",
+              enhanceScope: document.querySelector("#enhanceScope")?.value ?? "all",
+              enhanceSystem: document.querySelector("#enhanceSystem")?.value ?? ""
             })
             """);
         var encoded = JsonSerializer.Deserialize<string>(json) ?? "{}";
@@ -481,6 +513,17 @@ Use concrete type, method, file, and line names from the supplied payload whenev
 For codeExamples, prefer supplied codeExcerpts when present. Quote only short snippets from supplied examples or codeExcerpts. Do not invent source code.
 For Korean output, write natural Korean developer-facing prose.
 For workflow output, fill overview, readingPath, importantFlows, codeExamples, risks, and nextQuestions. Prefer 4-6 readingPath steps, 2-4 importantFlows, 1-3 codeExamples, 2-4 risks, and 2-4 nextQuestions when evidence is available.
+""";
+
+    private const string AiContextEnhanceInstruction = """
+Rewrite this generated Unity Code Graph context Markdown into a clearer developer handoff document.
+
+Return Markdown only. Do not wrap the result in a code fence.
+Preserve concrete type names, method names, file names, line numbers, relationships, and evidence.
+Do not invent code, runtime behavior, dependencies, or business intent beyond the supplied context.
+Separate extracted facts from interpretation. If evidence is weak, say so.
+Keep the document useful for Claude Code, Codex, Cursor, or another AI coding agent that will inspect the source files next.
+Use Korean prose for explanations, but keep code identifiers, file paths, and headings readable.
 """;
 
     private static readonly IReadOnlyDictionary<string, string> ContentTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -545,6 +588,165 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
         }
 
         throw new InvalidOperationException("Could not start a local canvas server on ports 5173-5199.");
+    }
+
+    public static async Task EnhanceAiContextAsync(string outputPath, string scope, string systemFilter, Action<string?> log)
+    {
+        var config = CurrentAiConfig();
+        if (!IsAiConfigured(config, out var reason))
+        {
+            log($"AI context enhance unavailable: {reason}");
+            return;
+        }
+
+        var outputDirectory = Path.GetDirectoryName(Path.GetFullPath(outputPath)) ?? Environment.CurrentDirectory;
+        var sourceDirectory = Path.Combine(outputDirectory, "ai-context");
+        if (!Directory.Exists(sourceDirectory))
+        {
+            log($"AI context folder not found: {sourceDirectory}");
+            log("Generate the graph once before enhancing AI context.");
+            return;
+        }
+
+        var targetDirectory = Path.Combine(outputDirectory, "ai-context-enhanced");
+        Directory.CreateDirectory(targetDirectory);
+
+        var markdownFiles = Directory.EnumerateFiles(sourceDirectory, "*.md", SearchOption.AllDirectories)
+            .OrderBy(path => Path.GetRelativePath(sourceDirectory, path), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        markdownFiles = FilterAiContextFiles(markdownFiles, sourceDirectory, scope, systemFilter, log);
+        if (markdownFiles.Count == 0)
+        {
+            log("No Markdown files found under ai-context.");
+            return;
+        }
+
+        log($"Enhancing {markdownFiles.Count} AI context Markdown files with {config.Provider} / {config.Model}.");
+        foreach (var sourcePath in markdownFiles)
+        {
+            var relativePath = Path.GetRelativePath(sourceDirectory, sourcePath);
+            var targetPath = Path.Combine(targetDirectory, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+            log($"Enhancing {relativePath}");
+
+            var sourceMarkdown = await File.ReadAllTextAsync(sourcePath, Encoding.UTF8);
+            var siblingJsonPath = Path.ChangeExtension(sourcePath, ".json");
+            var siblingJson = File.Exists(siblingJsonPath)
+                ? await File.ReadAllTextAsync(siblingJsonPath, Encoding.UTF8)
+                : "";
+            var payload = JsonSerializer.Serialize(new
+            {
+                path = relativePath.Replace('\\', '/'),
+                sourceMarkdown = ClipForPrompt(sourceMarkdown, 60000),
+                extractedJson = ClipForPrompt(siblingJson, 50000)
+            }, JsonOptions);
+
+            var enhanced = await RequestAiPlainTextAsync(config, payload, AiContextEnhanceInstruction);
+            enhanced = StripCodeFence(enhanced).Trim();
+            if (string.IsNullOrWhiteSpace(enhanced))
+            {
+                throw new AiRequestException($"AI returned an empty enhanced document for {relativePath}.");
+            }
+
+            await File.WriteAllTextAsync(targetPath, EnhancedContextHeader(relativePath, siblingJsonPath, sourceDirectory) + enhanced + Environment.NewLine, Encoding.UTF8);
+        }
+
+        await File.WriteAllTextAsync(
+            Path.Combine(targetDirectory, "README.md"),
+            "# Enhanced AI Context\n\nThis folder contains AI-rewritten Markdown generated from `../ai-context`. Treat it as interpretation, and keep `../ai-context` as the extracted evidence source.\n",
+            Encoding.UTF8);
+        log($"Wrote {targetDirectory}");
+    }
+
+    private static List<string> FilterAiContextFiles(IReadOnlyList<string> markdownFiles, string sourceDirectory, string scope, string systemFilter, Action<string?> log)
+    {
+        var normalizedScope = string.IsNullOrWhiteSpace(scope) ? "all" : scope.Trim().ToLowerInvariant();
+        if (normalizedScope == "all")
+        {
+            return markdownFiles.ToList();
+        }
+
+        if (normalizedScope == "index")
+        {
+            return markdownFiles
+                .Where(path => Path.GetFileName(path).Equals("index.md", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        if (normalizedScope != "system")
+        {
+            log($"Unknown AI context scope '{scope}', using All Context.");
+            return markdownFiles.ToList();
+        }
+
+        var wanted = NormalizeSystemFilter(systemFilter);
+        if (string.IsNullOrWhiteSpace(wanted))
+        {
+            log("Single System scope needs a system file name, such as battle-system or systems/battle-system.md.");
+            return new List<string>();
+        }
+
+        var matches = markdownFiles
+            .Where(path =>
+            {
+                var relative = Path.GetRelativePath(sourceDirectory, path).Replace('\\', '/');
+                return relative.Equals(wanted, StringComparison.OrdinalIgnoreCase)
+                    || Path.GetFileNameWithoutExtension(relative).Equals(Path.GetFileNameWithoutExtension(wanted), StringComparison.OrdinalIgnoreCase);
+            })
+            .ToList();
+
+        if (matches.Count == 0)
+        {
+            var candidates = markdownFiles
+                .Where(path => Path.GetRelativePath(sourceDirectory, path).Replace('\\', '/').StartsWith("systems/", StringComparison.OrdinalIgnoreCase))
+                .Select(path => Path.GetRelativePath(sourceDirectory, path).Replace('\\', '/'))
+                .Take(8);
+            log($"No matching system context for '{systemFilter}'. Candidates: {string.Join(", ", candidates)}");
+        }
+
+        return matches;
+    }
+
+    private static string NormalizeSystemFilter(string systemFilter)
+    {
+        var value = systemFilter.Trim().Replace('\\', '/');
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "";
+        }
+
+        if (!value.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            value += ".md";
+        }
+
+        if (!value.Contains('/', StringComparison.Ordinal))
+        {
+            value = $"systems/{value}";
+        }
+
+        return value;
+    }
+
+    private static string EnhancedContextHeader(string relativeMarkdownPath, string siblingJsonPath, string sourceDirectory)
+    {
+        var relativeMarkdown = relativeMarkdownPath.Replace('\\', '/');
+        var parentPrefix = string.Concat(Enumerable.Repeat("../", relativeMarkdown.Count(ch => ch == '/') + 1));
+        var sourceLink = $"{parentPrefix}ai-context/{relativeMarkdown}";
+        var relativeJson = File.Exists(siblingJsonPath)
+            ? $"{parentPrefix}ai-context/{Path.GetRelativePath(sourceDirectory, siblingJsonPath).Replace('\\', '/')}"
+            : "";
+        var builder = new StringBuilder();
+        builder.AppendLine("<!-- AI-enhanced document generated from Unity Code Graph context. -->");
+        builder.AppendLine();
+        builder.AppendLine($"> Source evidence: [{relativeMarkdown}]({sourceLink})");
+        if (!string.IsNullOrWhiteSpace(relativeJson))
+        {
+            builder.AppendLine($"> Extracted JSON: [{Path.GetFileName(relativeJson)}]({relativeJson})");
+        }
+        builder.AppendLine("> This file is AI-written interpretation. Verify behavior against the linked evidence and source files.");
+        builder.AppendLine();
+        return builder.ToString();
     }
 
     public void Dispose()
@@ -1336,6 +1538,103 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
         }
     }
 
+    private static async Task<string> RequestAiPlainTextAsync(AiRuntimeConfig config, string payload, string instruction)
+    {
+        return config.Provider switch
+        {
+            "openai" => await RequestOpenAiPlainTextAsync(config, payload, instruction),
+            "openrouter" => await RequestOpenAiCompatiblePlainTextAsync(config, payload, instruction),
+            "deepseek" => await RequestOpenAiCompatiblePlainTextAsync(config, payload, instruction),
+            "compatible" => await RequestOpenAiCompatiblePlainTextAsync(config, payload, instruction),
+            "ollama" => await RequestOllamaPlainTextAsync(config, payload, instruction),
+            "vertex" => await RequestVertexPlainTextAsync(config, payload, instruction),
+            _ => ""
+        };
+    }
+
+    private static async Task<string> RequestOpenAiPlainTextAsync(AiRuntimeConfig config, string payload, string instruction)
+    {
+        var requestPayload = new
+        {
+            model = config.Model,
+            instructions = AiSystemPrompt,
+            input = new object[]
+            {
+                new
+                {
+                    role = "user",
+                    content = new object[]
+                    {
+                        new
+                        {
+                            type = "input_text",
+                            text = $"{instruction}\n\nPayload:\n{payload}"
+                        }
+                    }
+                }
+            },
+            max_output_tokens = 4096,
+            store = false
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{config.BaseUrl.TrimEnd('/')}/responses");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.ApiKey);
+        request.Content = new StringContent(JsonSerializer.Serialize(requestPayload, JsonOptions), Encoding.UTF8, "application/json");
+        using var response = await AiHttp.SendAsync(request);
+        var responseText = await response.Content.ReadAsStringAsync();
+        EnsureAiSuccess(response, responseText);
+        return ExtractResponseOutputText(responseText);
+    }
+
+    private static async Task<string> RequestOpenAiCompatiblePlainTextAsync(AiRuntimeConfig config, string payload, string instruction)
+    {
+        var requestPayload = new
+        {
+            model = config.Model,
+            messages = new object[]
+            {
+                new { role = "system", content = AiSystemPrompt },
+                new { role = "user", content = $"{instruction}\n\nPayload:\n{payload}" }
+            },
+            temperature = 0.2,
+            max_tokens = 4096
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{config.BaseUrl.TrimEnd('/')}/chat/completions");
+        if (!string.IsNullOrWhiteSpace(config.ApiKey))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.ApiKey);
+        }
+        AddOpenRouterHeaders(request, config);
+
+        request.Content = new StringContent(JsonSerializer.Serialize(requestPayload, JsonOptions), Encoding.UTF8, "application/json");
+        using var response = await AiHttp.SendAsync(request);
+        var responseText = await response.Content.ReadAsStringAsync();
+        EnsureAiSuccess(response, responseText);
+        return ExtractChatOutputText(responseText);
+    }
+
+    private static async Task<string> RequestOllamaPlainTextAsync(AiRuntimeConfig config, string payload, string instruction)
+    {
+        var requestPayload = new
+        {
+            model = config.Model,
+            stream = false,
+            messages = new object[]
+            {
+                new { role = "system", content = AiSystemPrompt },
+                new { role = "user", content = $"{instruction}\n\nPayload:\n{payload}" }
+            }
+        };
+
+        using var response = await AiHttp.PostAsync(
+            $"{config.BaseUrl.TrimEnd('/')}/api/chat",
+            new StringContent(JsonSerializer.Serialize(requestPayload, JsonOptions), Encoding.UTF8, "application/json"));
+        var responseText = await response.Content.ReadAsStringAsync();
+        EnsureAiSuccess(response, responseText);
+        return ExtractOllamaOutputText(responseText);
+    }
+
     private static async Task<string> RequestOpenAiResponseAsync(AiRuntimeConfig config, string payload, string instruction, string schemaName, bool workflow)
     {
         var requestPayload = new
@@ -1775,6 +2074,16 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
         return clipped.Length > 500 ? clipped[..500] : clipped;
     }
 
+    private static string ClipForPrompt(string text, int maxChars)
+    {
+        if (string.IsNullOrEmpty(text) || text.Length <= maxChars)
+        {
+            return text;
+        }
+
+        return text[..maxChars] + "\n\n[truncated by Unity Code Graph]";
+    }
+
     private static void AddOpenRouterHeaders(HttpRequestMessage request, AiRuntimeConfig config)
     {
         if (!config.Provider.Equals("openrouter", StringComparison.OrdinalIgnoreCase))
@@ -1815,6 +2124,46 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
                 temperature = 0.2,
                 maxOutputTokens = workflow ? 4096 : 900,
                 responseMimeType = "application/json"
+            }
+        };
+
+        var endpoint = VertexGenerateContentEndpoint(config);
+        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        request.Content = new StringContent(JsonSerializer.Serialize(requestPayload, JsonOptions), Encoding.UTF8, "application/json");
+        using var response = await AiHttp.SendAsync(request);
+        var responseText = await response.Content.ReadAsStringAsync();
+        EnsureAiSuccess(response, responseText);
+        return ExtractVertexOutputText(responseText);
+    }
+
+    private static async Task<string> RequestVertexPlainTextAsync(AiRuntimeConfig config, string payload, string instruction)
+    {
+        var accessToken = await RequestVertexAccessTokenAsync(config);
+        var requestPayload = new
+        {
+            systemInstruction = new
+            {
+                parts = new[]
+                {
+                    new { text = AiSystemPrompt }
+                }
+            },
+            contents = new[]
+            {
+                new
+                {
+                    role = "user",
+                    parts = new[]
+                    {
+                        new { text = $"{instruction}\n\nPayload:\n{payload}" }
+                    }
+                }
+            },
+            generationConfig = new
+            {
+                temperature = 0.2,
+                maxOutputTokens = 4096
             }
         };
 
@@ -2334,7 +2683,7 @@ For workflow output, fill overview, readingPath, importantFlows, codeExamples, r
     }
 }
 
-internal sealed record LauncherSettings(string ProjectPath, string Roots, string OutputPath);
+internal sealed record LauncherSettings(string ProjectPath, string Roots, string OutputPath, string EnhanceScope, string EnhanceSystem);
 
 internal readonly record struct SourceLocation(string File, int Line, int Priority);
 

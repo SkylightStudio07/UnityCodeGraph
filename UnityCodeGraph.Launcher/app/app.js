@@ -8,10 +8,13 @@ const els = {
   gitUrl: document.querySelector("#gitUrl"),
   roots: document.querySelector("#roots"),
   outputPath: document.querySelector("#outputPath"),
+  enhanceScope: document.querySelector("#enhanceScope"),
+  enhanceSystem: document.querySelector("#enhanceSystem"),
   browse: document.querySelector("#browse"),
   clone: document.querySelector("#clone"),
   generate: document.querySelector("#generate"),
   watch: document.querySelector("#watch"),
+  enhanceContext: document.querySelector("#enhanceContext"),
   stop: document.querySelector("#stop"),
   openCanvas: document.querySelector("#openCanvas"),
   clearLog: document.querySelector("#clearLog"),
@@ -34,6 +37,10 @@ els.watch.addEventListener("click", () => {
   rememberCurrentSettings();
   send({ type: "watch", ...settings() });
 });
+els.enhanceContext.addEventListener("click", () => {
+  rememberCurrentSettings();
+  send({ type: "enhanceContext", ...settings() });
+});
 els.stop.addEventListener("click", () => send({ type: "stop" }));
 els.openCanvas.addEventListener("click", () => {
   rememberCurrentSettings();
@@ -50,6 +57,7 @@ els.clearRecent.addEventListener("click", () => {
 for (const input of [els.projectPath, els.roots, els.outputPath]) {
   input.addEventListener("change", rememberLastSettings);
 }
+els.enhanceScope.addEventListener("change", renderEnhanceOptions);
 
 api?.addEventListener("message", (event) => {
   const { type, payload } = event.data;
@@ -77,13 +85,16 @@ api?.addEventListener("message", (event) => {
 });
 
 renderRecentList();
+renderEnhanceOptions();
 send({ type: "ready" });
 
 function settings() {
   return {
     projectPath: els.projectPath.value,
     roots: els.roots.value,
-    outputPath: els.outputPath.value
+    outputPath: els.outputPath.value,
+    enhanceScope: els.enhanceScope.value,
+    enhanceSystem: els.enhanceSystem.value.trim()
   };
 }
 
@@ -192,10 +203,13 @@ function setRunning(running, mode = "") {
   els.statusPill.textContent = running ? "RUNNING" : "IDLE";
   els.statusPill.classList.toggle("running", running);
   els.statusText.textContent = running
-    ? mode === "watch" ? "Watching for C# changes" : "Generating graph"
+    ? mode === "watch" ? "Watching for C# changes" : mode === "enhance" ? "Enhancing AI context" : "Generating graph"
     : "Ready to generate";
   els.generate.disabled = running;
   els.watch.disabled = running;
+  els.enhanceContext.disabled = running;
+  els.enhanceScope.disabled = running;
+  els.enhanceSystem.disabled = running || els.enhanceScope.value !== "system";
   els.clone.disabled = running;
   els.browse.disabled = running;
   els.stop.disabled = !running;
@@ -206,6 +220,14 @@ function log(message) {
   const time = new Date().toLocaleTimeString();
   els.log.textContent += `[${time}] ${message}\n`;
   els.log.scrollTop = els.log.scrollHeight;
+}
+
+function renderEnhanceOptions() {
+  const single = els.enhanceScope.value === "system";
+  els.enhanceSystem.disabled = !single;
+  els.enhanceSystem.placeholder = single
+    ? "battle-system or systems/battle-system.md"
+    : "Used only for Single System";
 }
 
 function escapeHtml(value) {

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text;
 using System.Text.Json.Serialization;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -17,6 +18,7 @@ var rootOption = interactive ? Prompt("Code folder names", "Scripts,Source") : G
 var scanRootNames = rootOption
     ?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .ToHashSet(StringComparer.OrdinalIgnoreCase);
+var writeAiContext = !HasOption(args, "--no-ai-context");
 var outputPath = interactive
     ? Prompt("Output JSON path", Path.Combine(targetPath, "code-graph.json"))
     : GetOption(args, "--output", "-o") ?? Path.Combine(Environment.CurrentDirectory, "graph.json");
@@ -34,11 +36,11 @@ var jsonOptions = new JsonSerializerOptions
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
 };
 
-await RunAnalysisAsync(targetPath, outputPath, scanRootNames, jsonOptions);
+await RunAnalysisAsync(targetPath, outputPath, scanRootNames, jsonOptions, writeAiContext);
 
 if (watch)
 {
-    await WatchAsync(targetPath, outputPath, scanRootNames, jsonOptions);
+    await WatchAsync(targetPath, outputPath, scanRootNames, jsonOptions, writeAiContext);
 }
 
 return 0;
@@ -72,21 +74,40 @@ static async Task RunAnalysisAsync(
     string targetPath,
     string outputPath,
     IReadOnlySet<string>? scanRootNames,
-    JsonSerializerOptions jsonOptions)
+    JsonSerializerOptions jsonOptions,
+    bool writeAiContext)
 {
     var analyzer = new CodeGraphAnalyzer();
     var graph = analyzer.Analyze(targetPath, scanRootNames);
 
     await File.WriteAllTextAsync(outputPath, JsonSerializer.Serialize(graph, jsonOptions));
+    string? contextPath = null;
+    IReadOnlyList<string> contextMessages = Array.Empty<string>();
+    if (writeAiContext)
+    {
+        var result = await AiContextExporter.WriteAsync(graph, outputPath, jsonOptions);
+        contextPath = result.ContextDirectory;
+        contextMessages = result.Messages;
+    }
+
     Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Analyzed {graph.Files.Count} files, {graph.Nodes.Count} types, {graph.Edges.Count} relationships.");
     Console.WriteLine($"Wrote {Path.GetFullPath(outputPath)}");
+    if (contextPath is not null)
+    {
+        Console.WriteLine($"Wrote {contextPath}");
+    }
+    foreach (var message in contextMessages)
+    {
+        Console.WriteLine(message);
+    }
 }
 
 static async Task WatchAsync(
     string targetPath,
     string outputPath,
     IReadOnlySet<string>? scanRootNames,
-    JsonSerializerOptions jsonOptions)
+    JsonSerializerOptions jsonOptions,
+    bool writeAiContext)
 {
     var watchPath = Directory.Exists(targetPath)
         ? targetPath
@@ -158,7 +179,7 @@ static async Task WatchAsync(
 
         try
         {
-            await RunAnalysisAsync(targetPath, outputPath, scanRootNames, jsonOptions);
+            await RunAnalysisAsync(targetPath, outputPath, scanRootNames, jsonOptions, writeAiContext);
         }
         catch (Exception ex)
         {
@@ -225,7 +246,696 @@ static void PrintHelp()
       --output, -o <path>   Output JSON path.
       --roots <names>      Only scan directories with these names, such as Scripts,Source.
       --watch, -w          Keep running and regenerate the graph when .cs files change.
+      --no-ai-context      Do not write the generated ai-context folder next to the graph JSON.
     """);
+}
+
+internal static class AiContextExporter
+{
+    private const string ManifestFileName = ".unity-code-graph-context.json";
+    private const int MaxSystems = 80;
+    private const int MaxTypes = 24;
+    private const int MaxEntries = 16;
+    private const int MaxFlows = 8;
+    private const int MaxFlowSteps = 12;
+    private const int MaxRelationships = 36;
+    private const int MaxMethodCalls = 36;
+    private const int MaxEvidence = 16;
+
+    public static async Task<AiContextWriteResult> WriteAsync(CodeGraph graph, string outputPath, JsonSerializerOptions jsonOptions)
+    {
+        var outputDirectory = Path.GetDirectoryName(Path.GetFullPath(outputPath)) ?? Environment.CurrentDirectory;
+        var contextDirectory = Path.Combine(outputDirectory, "ai-context");
+        var systemsDirectory = Path.Combine(contextDirectory, "systems");
+        Directory.CreateDirectory(systemsDirectory);
+
+        CleanPreviousGeneratedFiles(contextDirectory);
+
+        var systems = BuildSystems(graph).ToList();
+        var generatedFiles = new List<string>();
+        var messages = new List<string>();
+
+        var indexMarkdown = BuildIndexMarkdown(graph, systems);
+        await WriteGeneratedFileAsync(contextDirectory, "index.md", indexMarkdown, generatedFiles);
+
+        var indexJson = new
+        {
+            schemaVersion = 1,
+            generator = "Unity Code Graph",
+            generatedAt = DateTimeOffset.UtcNow,
+            graph = new
+            {
+                source = graph.RootPath,
+                nodeCount = graph.Nodes.Count,
+                edgeCount = graph.Edges.Count,
+                methodCount = graph.Methods.Count,
+                methodEdgeCount = graph.MethodEdges.Count,
+                systemCount = graph.SystemClusters.Count,
+                exportedSystemCount = systems.Count
+            },
+            systems = systems.Select(system => new
+            {
+                system.Id,
+                system.Name,
+                system.Anchor,
+                system.Stats,
+                system.RoleEstimate,
+                system.StartHere,
+                system.CoreTypes,
+                system.LikelyFlows,
+                system.Relationships,
+                system.MethodCalls,
+                system.Evidence,
+                system.SuggestedAiTask
+            })
+        };
+        await WriteGeneratedFileAsync(contextDirectory, "index.json", JsonSerializer.Serialize(indexJson, jsonOptions), generatedFiles);
+
+        foreach (var system in systems)
+        {
+            var baseName = SafeFileName(system.Name);
+            await WriteGeneratedFileAsync(systemsDirectory, $"{baseName}.md", BuildSystemMarkdown(system), generatedFiles, contextDirectory);
+            await WriteGeneratedFileAsync(systemsDirectory, $"{baseName}.json", JsonSerializer.Serialize(system, jsonOptions), generatedFiles, contextDirectory);
+        }
+
+        var manifest = new
+        {
+            generator = "Unity Code Graph",
+            generatedAt = DateTimeOffset.UtcNow,
+            files = generatedFiles.Order(StringComparer.Ordinal).ToList()
+        };
+        await File.WriteAllTextAsync(
+            Path.Combine(contextDirectory, ManifestFileName),
+            JsonSerializer.Serialize(manifest, jsonOptions),
+            Encoding.UTF8);
+
+        messages.AddRange(await WriteAgentGuidesAsync(outputDirectory));
+
+        return new AiContextWriteResult(contextDirectory, messages);
+    }
+
+    private static async Task<IReadOnlyList<string>> WriteAgentGuidesAsync(string outputDirectory)
+    {
+        var messages = new List<string>();
+        foreach (var fileName in new[] { "AGENTS.md", "CLAUDE.md" })
+        {
+            var path = Path.Combine(outputDirectory, fileName);
+            if (File.Exists(path))
+            {
+                messages.Add($"Skipped {path} because it already exists.");
+                continue;
+            }
+
+            await File.WriteAllTextAsync(path, AgentGuideMarkdown(fileName), Encoding.UTF8);
+            messages.Add($"Wrote {path}");
+        }
+
+        return messages;
+    }
+
+    private static string AgentGuideMarkdown(string fileName)
+    {
+        var title = fileName.Equals("CLAUDE.md", StringComparison.OrdinalIgnoreCase)
+            ? "Claude Code Guide"
+            : "Project Agent Guide";
+        return $$"""
+        # {{title}}
+
+        Before answering architecture, code-flow, or feature ownership questions, read:
+
+        - `ai-context/index.md`
+
+        For feature-specific work, also read the matching file under:
+
+        - `ai-context/systems/*.md`
+
+        Treat `ai-context` as generated graph evidence, not as final truth. If behavior matters, inspect the referenced source files and methods directly.
+
+        If `ai-context-enhanced` exists, treat it as AI-written interpretation layered on top of `ai-context`. Prefer `ai-context` for evidence and use enhanced files only as reading guides.
+
+        When graph data looks stale, regenerate the graph before relying on `ai-context`.
+        """;
+    }
+
+    private static IEnumerable<SystemContext> BuildSystems(CodeGraph graph)
+    {
+        var nodeById = graph.Nodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
+        var methodById = graph.Methods.ToDictionary(method => method.Id, StringComparer.Ordinal);
+
+        foreach (var cluster in graph.SystemClusters
+            .OrderByDescending(cluster => cluster.NodeIds.Count)
+            .ThenByDescending(cluster => cluster.InternalEdges)
+            .ThenBy(cluster => cluster.Name, StringComparer.Ordinal)
+            .Take(MaxSystems))
+        {
+            var clusterIds = cluster.NodeIds.ToHashSet(StringComparer.Ordinal);
+            var clusterNodes = cluster.NodeIds
+                .Select(id => nodeById.GetValueOrDefault(id))
+                .Where(node => node is not null)
+                .Cast<GraphNode>()
+                .ToList();
+            var degree = BuildDegree(clusterNodes, graph.Edges);
+            var coreTypes = clusterNodes
+                .Select(node => new TypeSummary(
+                    node.Id,
+                    node.Name,
+                    node.Kind,
+                    node.Namespace,
+                    node.File,
+                    node.Line,
+                    node.IsUnityType,
+                    degree.TryGetValue(node.Id, out var stat) ? stat.In : 0,
+                    degree.TryGetValue(node.Id, out stat) ? stat.Out : 0,
+                    degree.TryGetValue(node.Id, out stat) ? stat.Internal : 0,
+                    degree.TryGetValue(node.Id, out stat) ? stat.External : 0))
+                .OrderByDescending(item => item.Internal + item.External + item.Incoming + item.Outgoing)
+                .ThenBy(item => item.Name, StringComparer.Ordinal)
+                .Take(MaxTypes)
+                .ToList();
+
+            var entries = cluster.EntryMethodIds
+                .Select(id => methodById.GetValueOrDefault(id))
+                .Where(method => method is not null)
+                .Cast<GraphMethod>()
+                .OrderBy(method => EntryRank(method))
+                .ThenBy(method => method.Line)
+                .Take(MaxEntries)
+                .Select(method => MethodSummary.From(method))
+                .ToList();
+
+            var internalRelationships = graph.Edges
+                .Where(edge => clusterIds.Contains(edge.Source) && clusterIds.Contains(edge.Target))
+                .OrderByDescending(edge => edge.Weight)
+                .ThenBy(edge => edge.Kind, StringComparer.Ordinal)
+                .ThenBy(edge => edge.Source, StringComparer.Ordinal)
+                .Take(MaxRelationships)
+                .Select(edge => RelationshipSummary.From(edge, nodeById, "internal"))
+                .ToList();
+
+            var externalRelationships = graph.Edges
+                .Where(edge => clusterIds.Contains(edge.Source) != clusterIds.Contains(edge.Target))
+                .OrderByDescending(edge => edge.Weight)
+                .ThenBy(edge => edge.Kind, StringComparer.Ordinal)
+                .ThenBy(edge => edge.Source, StringComparer.Ordinal)
+                .Take(MaxRelationships)
+                .Select(edge => RelationshipSummary.From(edge, nodeById, clusterIds.Contains(edge.Source) ? "outgoing" : "incoming"))
+                .ToList();
+
+            var internalCalls = graph.MethodEdges
+                .Select(edge => new { Edge = edge, Source = methodById.GetValueOrDefault(edge.Source), Target = methodById.GetValueOrDefault(edge.Target) })
+                .Where(item => item.Source is not null && item.Target is not null && clusterIds.Contains(item.Source.TypeId) && clusterIds.Contains(item.Target.TypeId))
+                .OrderByDescending(item => item.Edge.Weight)
+                .ThenBy(item => item.Source!.Line)
+                .Take(MaxMethodCalls)
+                .Select(item => MethodCallSummary.From(item.Edge, item.Source!, item.Target!))
+                .ToList();
+
+            var flows = BuildFlows(cluster.EntryMethodIds, graph.MethodEdges, methodById, clusterIds);
+            var evidence = BuildEvidence(flows, internalCalls, externalRelationships, internalRelationships, cluster).Take(MaxEvidence).ToList();
+            var role = EstimateRole(cluster, clusterNodes);
+
+            yield return new SystemContext(
+                cluster.Id,
+                cluster.Name,
+                $"systems/{SafeFileName(cluster.Name)}.md",
+                new SystemStats(cluster.NodeIds.Count, cluster.InternalEdges, cluster.ExternalEdges, cluster.EntryMethodIds.Count, cluster.Keywords),
+                role,
+                entries,
+                coreTypes,
+                flows,
+                new RelationshipGroups(internalRelationships, externalRelationships),
+                new MethodCallGroups(internalCalls),
+                evidence,
+                $"Use the {cluster.Name} context to explain the reading order, likely runtime flow, and risky assumptions. Cite method names, relationship edges, and file references when possible.");
+        }
+    }
+
+    private static Dictionary<string, DegreeStat> BuildDegree(IEnumerable<GraphNode> nodes, IEnumerable<GraphEdge> edges)
+    {
+        var ids = nodes.Select(node => node.Id).ToHashSet(StringComparer.Ordinal);
+        var degree = ids.ToDictionary(id => id, _ => new DegreeStat(), StringComparer.Ordinal);
+        foreach (var edge in edges)
+        {
+            var sourceIn = ids.Contains(edge.Source);
+            var targetIn = ids.Contains(edge.Target);
+            if (!sourceIn && !targetIn)
+            {
+                continue;
+            }
+
+            if (sourceIn && degree.TryGetValue(edge.Source, out var source))
+            {
+                source.Out += edge.Weight;
+                if (targetIn) source.Internal += edge.Weight;
+                else source.External += edge.Weight;
+            }
+
+            if (targetIn && degree.TryGetValue(edge.Target, out var target))
+            {
+                target.In += edge.Weight;
+                if (sourceIn) target.Internal += edge.Weight;
+                else target.External += edge.Weight;
+            }
+        }
+
+        return degree;
+    }
+
+    private static List<FlowSummary> BuildFlows(
+        IEnumerable<string> entryMethodIds,
+        IEnumerable<GraphMethodEdge> methodEdges,
+        IReadOnlyDictionary<string, GraphMethod> methodById,
+        IReadOnlySet<string> clusterIds)
+    {
+        var outgoing = methodEdges
+            .Select(edge => new { Edge = edge, Source = methodById.GetValueOrDefault(edge.Source), Target = methodById.GetValueOrDefault(edge.Target) })
+            .Where(item => item.Source is not null && item.Target is not null && clusterIds.Contains(item.Source.TypeId) && clusterIds.Contains(item.Target.TypeId))
+            .GroupBy(item => item.Edge.Source)
+            .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.Edge.Weight).ThenBy(item => item.Target!.Line).ToList(), StringComparer.Ordinal);
+
+        var flows = new List<FlowSummary>();
+        foreach (var entry in entryMethodIds.Select(id => methodById.GetValueOrDefault(id)).Where(method => method is not null).Cast<GraphMethod>().Take(MaxFlows))
+        {
+            var steps = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var current = entry;
+            for (var depth = 0; depth < MaxFlowSteps; depth++)
+            {
+                if (!seen.Add(current.Id))
+                {
+                    steps.Add($"{MethodLabel(current)} / cycle");
+                    break;
+                }
+
+                var nextEdges = outgoing.GetValueOrDefault(current.Id);
+                steps.Add($"{MethodLabel(current)}{(nextEdges is { Count: > 0 } ? "" : " / terminal")}");
+                if (nextEdges is not { Count: > 0 })
+                {
+                    break;
+                }
+
+                current = nextEdges[0].Target!;
+            }
+
+            if (steps.Count > 0)
+            {
+                flows.Add(new FlowSummary(MethodLabel(entry), steps));
+            }
+        }
+
+        return flows;
+    }
+
+    private static IEnumerable<EvidenceSummary> BuildEvidence(
+        IReadOnlyList<FlowSummary> flows,
+        IReadOnlyList<MethodCallSummary> calls,
+        IReadOnlyList<RelationshipSummary> externalRelationships,
+        IReadOnlyList<RelationshipSummary> internalRelationships,
+        GraphSystemCluster cluster)
+    {
+        foreach (var flow in flows.Take(2))
+        {
+            yield return new EvidenceSummary("Likely flow", $"{flow.Entry} -> {string.Join(" -> ", flow.Steps.Skip(1).Take(3))}", null);
+        }
+
+        foreach (var call in calls.Take(3))
+        {
+            yield return new EvidenceSummary("Internal call", $"{call.SourceType}.{call.Source} -> {call.TargetType}.{call.Target}", call.Example);
+        }
+
+        foreach (var relationship in externalRelationships.Take(3))
+        {
+            yield return new EvidenceSummary($"{relationship.Direction} {relationship.Kind}", $"{relationship.SourceName} -> {relationship.TargetName} / {relationship.Weight} refs", relationship.Example);
+        }
+
+        foreach (var relationship in internalRelationships)
+        {
+            yield return new EvidenceSummary($"Internal {relationship.Kind}", $"{relationship.SourceName} -> {relationship.TargetName} / {relationship.Weight} refs", relationship.Example);
+        }
+
+        if (!flows.Any() && !calls.Any() && !externalRelationships.Any() && !internalRelationships.Any())
+        {
+            yield return new EvidenceSummary("System cluster", $"{cluster.Name} contains {cluster.NodeIds.Count} related types.", null);
+        }
+    }
+
+    private static string BuildIndexMarkdown(CodeGraph graph, IReadOnlyList<SystemContext> systems)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("# Unity Code Graph AI Context");
+        builder.AppendLine();
+        builder.AppendLine("This folder is generated from local graph analysis. It is designed for AI coding tools such as Claude Code, Codex, Cursor, and similar agents.");
+        builder.AppendLine();
+        builder.AppendLine("## How To Use");
+        builder.AppendLine();
+        builder.AppendLine("- Start with this `index.md` file for a project map.");
+        builder.AppendLine("- Open a file under `systems/` when you want focused context for one feature area.");
+        builder.AppendLine("- Treat relationships and evidence as extracted facts, but treat role estimates and likely flows as heuristics.");
+        builder.AppendLine("- Ask for source files when this context is not enough.");
+        builder.AppendLine();
+        builder.AppendLine("## Graph Summary");
+        builder.AppendLine();
+        builder.AppendLine($"- Source: `{EscapeInline(graph.RootPath)}`");
+        builder.AppendLine($"- Types: {graph.Nodes.Count}");
+        builder.AppendLine($"- Relationships: {graph.Edges.Count}");
+        builder.AppendLine($"- Methods: {graph.Methods.Count}");
+        builder.AppendLine($"- Method calls: {graph.MethodEdges.Count}");
+        builder.AppendLine($"- Systems: {systems.Count}");
+        builder.AppendLine($"- Generated: {DateTimeOffset.UtcNow:O}");
+        builder.AppendLine();
+        builder.AppendLine("## System Index");
+        builder.AppendLine();
+        builder.AppendLine("| System | Types | Internal | External | Entry Candidates | Context |");
+        builder.AppendLine("| --- | ---: | ---: | ---: | ---: | --- |");
+        foreach (var system in systems)
+        {
+            builder.AppendLine($"| {EscapeTable(system.Name)} | {system.Stats.NodeCount} | {system.Stats.InternalEdges} | {system.Stats.ExternalEdges} | {system.Stats.EntryMethodCount} | [{EscapeTable(system.Anchor)}]({system.Anchor}) |");
+        }
+
+        builder.AppendLine();
+        return builder.ToString();
+    }
+
+    private static string BuildSystemMarkdown(SystemContext system)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"# {system.Name}");
+        builder.AppendLine();
+        builder.AppendLine(system.RoleEstimate);
+        builder.AppendLine();
+        builder.AppendLine("## Stats");
+        builder.AppendLine();
+        builder.AppendLine($"- Types: {system.Stats.NodeCount}");
+        builder.AppendLine($"- Internal relationships: {system.Stats.InternalEdges}");
+        builder.AppendLine($"- External relationships: {system.Stats.ExternalEdges}");
+        builder.AppendLine($"- Entry candidates: {system.Stats.EntryMethodCount}");
+        builder.AppendLine($"- Keywords: {(system.Stats.Keywords.Count > 0 ? string.Join(", ", system.Stats.Keywords.Select(keyword => $"`{EscapeInline(keyword)}`")) : "none")}");
+        builder.AppendLine();
+
+        AppendList(builder, "Start Here", system.StartHere, method => $"`{EscapeInline(method.Label)}` - {method.EntryKind} / {method.File}:{method.Line}");
+        AppendList(builder, "Core Types", system.CoreTypes, type => $"`{EscapeInline(type.Name)}` - {type.Kind}{(type.IsUnityType ? " / Unity" : "")} / {type.Outgoing} out / {type.Incoming} in / {type.File}:{type.Line}");
+        AppendFlows(builder, system.LikelyFlows);
+        AppendRelationships(builder, "Internal Type Relationships", system.Relationships.Internal);
+        AppendRelationships(builder, "External Touchpoints", system.Relationships.External);
+        AppendMethodCalls(builder, system.MethodCalls.Internal);
+        AppendEvidence(builder, system.Evidence);
+        builder.AppendLine("## Suggested AI Task");
+        builder.AppendLine();
+        builder.AppendLine(system.SuggestedAiTask);
+        builder.AppendLine();
+        return builder.ToString();
+    }
+
+    private static void AppendList<T>(StringBuilder builder, string title, IReadOnlyList<T> items, Func<T, string> formatter)
+    {
+        builder.AppendLine($"## {title}");
+        builder.AppendLine();
+        if (items.Count == 0)
+        {
+            builder.AppendLine("- None detected.");
+            builder.AppendLine();
+            return;
+        }
+
+        foreach (var item in items)
+        {
+            builder.AppendLine($"- {formatter(item)}");
+        }
+        builder.AppendLine();
+    }
+
+    private static void AppendFlows(StringBuilder builder, IReadOnlyList<FlowSummary> flows)
+    {
+        builder.AppendLine("## Likely Method Flows");
+        builder.AppendLine();
+        if (flows.Count == 0)
+        {
+            builder.AppendLine("- No internal method flow detected.");
+            builder.AppendLine();
+            return;
+        }
+
+        foreach (var flow in flows)
+        {
+            builder.AppendLine($"- `{EscapeInline(flow.Entry)}`");
+            foreach (var step in flow.Steps)
+            {
+                builder.AppendLine($"  - `{EscapeInline(step)}`");
+            }
+        }
+        builder.AppendLine();
+    }
+
+    private static void AppendRelationships(StringBuilder builder, string title, IReadOnlyList<RelationshipSummary> relationships)
+    {
+        builder.AppendLine($"## {title}");
+        builder.AppendLine();
+        if (relationships.Count == 0)
+        {
+            builder.AppendLine("- None detected.");
+            builder.AppendLine();
+            return;
+        }
+
+        foreach (var edge in relationships)
+        {
+            builder.AppendLine($"- `{EscapeInline(edge.SourceName)}` -> `{EscapeInline(edge.TargetName)}` - {edge.Direction} / {edge.Kind} / {edge.Weight} refs");
+            if (edge.Example is not null)
+            {
+                builder.AppendLine($"  - Evidence: `{EscapeInline(ExampleLabel(edge.Example))}`");
+            }
+        }
+        builder.AppendLine();
+    }
+
+    private static void AppendMethodCalls(StringBuilder builder, IReadOnlyList<MethodCallSummary> calls)
+    {
+        builder.AppendLine("## Internal Method Calls");
+        builder.AppendLine();
+        if (calls.Count == 0)
+        {
+            builder.AppendLine("- None detected.");
+            builder.AppendLine();
+            return;
+        }
+
+        foreach (var call in calls)
+        {
+            builder.AppendLine($"- `{EscapeInline(call.SourceType)}.{EscapeInline(call.Source)}` -> `{EscapeInline(call.TargetType)}.{EscapeInline(call.Target)}` / {call.Weight} refs");
+            if (call.Example is not null)
+            {
+                builder.AppendLine($"  - Evidence: `{EscapeInline(ExampleLabel(call.Example))}`");
+            }
+        }
+        builder.AppendLine();
+    }
+
+    private static void AppendEvidence(StringBuilder builder, IReadOnlyList<EvidenceSummary> evidence)
+    {
+        builder.AppendLine("## Evidence");
+        builder.AppendLine();
+        if (evidence.Count == 0)
+        {
+            builder.AppendLine("- No evidence rows generated.");
+            builder.AppendLine();
+            return;
+        }
+
+        foreach (var item in evidence)
+        {
+            builder.AppendLine($"- {item.Title} - {item.Detail}");
+            if (item.Example is not null)
+            {
+                builder.AppendLine($"  - `{EscapeInline(ExampleLabel(item.Example))}`");
+            }
+        }
+        builder.AppendLine();
+    }
+
+    private static async Task WriteGeneratedFileAsync(string directory, string relativePath, string content, List<string> generatedFiles, string? rootDirectory = null)
+    {
+        var root = rootDirectory ?? directory;
+        var fullPath = Path.Combine(directory, relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        await File.WriteAllTextAsync(fullPath, content, Encoding.UTF8);
+        generatedFiles.Add(Path.GetRelativePath(root, fullPath).Replace('\\', '/'));
+    }
+
+    private static void CleanPreviousGeneratedFiles(string contextDirectory)
+    {
+        var manifestPath = Path.Combine(contextDirectory, ManifestFileName);
+        if (!File.Exists(manifestPath))
+        {
+            return;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+            if (!document.RootElement.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Array)
+            {
+                return;
+            }
+
+            foreach (var file in files.EnumerateArray())
+            {
+                var relative = file.GetString();
+                if (string.IsNullOrWhiteSpace(relative))
+                {
+                    continue;
+                }
+
+                var fullPath = Path.GetFullPath(Path.Combine(contextDirectory, relative));
+                if (!fullPath.StartsWith(Path.GetFullPath(contextDirectory), StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (File.Exists(fullPath))
+                {
+                    File.Delete(fullPath);
+                }
+            }
+        }
+        catch
+        {
+            // A broken manifest should not block graph generation.
+        }
+    }
+
+    private static string EstimateRole(GraphSystemCluster cluster, IReadOnlyList<GraphNode> nodes)
+    {
+        var unityCount = nodes.Count(node => node.IsUnityType);
+        var density = cluster.InternalEdges > cluster.ExternalEdges ? "internally dense" : "externally connected";
+        var keywords = cluster.Keywords.Count > 0 ? string.Join(", ", cluster.Keywords.Take(5)) : "shared code";
+        return $"{cluster.Name} appears to be an {density} area around {keywords}. It contains {cluster.NodeIds.Count} types, including {unityCount} Unity-facing types.";
+    }
+
+    private static int EntryRank(GraphMethod method)
+    {
+        if (method.EntryKind.Contains("unity", StringComparison.OrdinalIgnoreCase)) return 0;
+        if (method.IsEntryPoint) return 1;
+        return 2;
+    }
+
+    private static string MethodLabel(GraphMethod method)
+    {
+        return $"{ShortTypeId(method.TypeId)}.{method.Signature}";
+    }
+
+    private static string ShortTypeId(string typeId)
+    {
+        return typeId.Split('.').LastOrDefault()?.Split('+').LastOrDefault() ?? typeId;
+    }
+
+    private static string SafeFileName(string value)
+    {
+        var builder = new StringBuilder();
+        foreach (var ch in value.ToLowerInvariant())
+        {
+            if (char.IsLetterOrDigit(ch) || ch is '.' or '_' or '-')
+            {
+                builder.Append(ch);
+            }
+            else if (char.IsWhiteSpace(ch) || ch is '/' or '\\')
+            {
+                builder.Append('-');
+            }
+        }
+
+        var result = builder.ToString().Trim('-');
+        while (result.Contains("--", StringComparison.Ordinal))
+        {
+            result = result.Replace("--", "-", StringComparison.Ordinal);
+        }
+
+        return string.IsNullOrWhiteSpace(result) ? "system" : result[..Math.Min(result.Length, 80)];
+    }
+
+    private static string EscapeInline(string value)
+    {
+        return value.Replace("`", "\\`", StringComparison.Ordinal).ReplaceLineEndings(" ");
+    }
+
+    private static string EscapeTable(string value)
+    {
+        return value.Replace("|", "\\|", StringComparison.Ordinal).ReplaceLineEndings(" ");
+    }
+
+    private static string ExampleLabel(ExampleSummary example)
+    {
+        return $"{example.File}:{example.Line} / {example.Text}";
+    }
+
+    private sealed class DegreeStat
+    {
+        public int In { get; set; }
+        public int Out { get; set; }
+        public int Internal { get; set; }
+        public int External { get; set; }
+    }
+
+    internal sealed record AiContextWriteResult(string ContextDirectory, IReadOnlyList<string> Messages);
+
+    private sealed record SystemContext(
+        string Id,
+        string Name,
+        string Anchor,
+        SystemStats Stats,
+        string RoleEstimate,
+        IReadOnlyList<MethodSummary> StartHere,
+        IReadOnlyList<TypeSummary> CoreTypes,
+        IReadOnlyList<FlowSummary> LikelyFlows,
+        RelationshipGroups Relationships,
+        MethodCallGroups MethodCalls,
+        IReadOnlyList<EvidenceSummary> Evidence,
+        string SuggestedAiTask);
+
+    private sealed record SystemStats(int NodeCount, int InternalEdges, int ExternalEdges, int EntryMethodCount, IReadOnlyList<string> Keywords);
+    private sealed record TypeSummary(string Id, string Name, string Kind, string Namespace, string File, int Line, bool IsUnityType, int Incoming, int Outgoing, int Internal, int External);
+    private sealed record FlowSummary(string Entry, IReadOnlyList<string> Steps);
+    private sealed record RelationshipGroups(IReadOnlyList<RelationshipSummary> Internal, IReadOnlyList<RelationshipSummary> External);
+    private sealed record MethodCallGroups(IReadOnlyList<MethodCallSummary> Internal);
+    private sealed record EvidenceSummary(string Title, string Detail, ExampleSummary? Example);
+
+    private sealed record MethodSummary(string Id, string TypeId, string Signature, string Label, string EntryKind, string File, int Line)
+    {
+        public static MethodSummary From(GraphMethod method)
+        {
+            return new MethodSummary(method.Id, method.TypeId, method.Signature, MethodLabel(method), method.EntryKind, method.File, method.Line);
+        }
+    }
+
+    private sealed record RelationshipSummary(string Kind, string Direction, string Source, string SourceName, string Target, string TargetName, int Weight, ExampleSummary? Example)
+    {
+        public static RelationshipSummary From(GraphEdge edge, IReadOnlyDictionary<string, GraphNode> nodeById, string direction)
+        {
+            var sourceName = nodeById.TryGetValue(edge.Source, out var source) ? source.Name : ShortTypeId(edge.Source);
+            var targetName = nodeById.TryGetValue(edge.Target, out var target) ? target.Name : ShortTypeId(edge.Target);
+            return new RelationshipSummary(edge.Kind, direction, edge.Source, sourceName, edge.Target, targetName, edge.Weight, ExampleSummary.From(edge.Examples.FirstOrDefault()));
+        }
+    }
+
+    private sealed record MethodCallSummary(string SourceType, string Source, string TargetType, string Target, int Weight, ExampleSummary? Example)
+    {
+        public static MethodCallSummary From(GraphMethodEdge edge, GraphMethod source, GraphMethod target)
+        {
+            return new MethodCallSummary(ShortTypeId(source.TypeId), source.Signature, ShortTypeId(target.TypeId), target.Signature, edge.Weight, ExampleSummary.From(edge.Examples.FirstOrDefault()));
+        }
+    }
+
+    private sealed record ExampleSummary(string File, int Line, string Text)
+    {
+        public static ExampleSummary? From(EdgeExample? example)
+        {
+            if (example is null)
+            {
+                return null;
+            }
+
+            return new ExampleSummary(example.File, example.Line, example.Text.Length > 240 ? example.Text[..240] : example.Text);
+        }
+    }
 }
 
 internal sealed class CodeGraphAnalyzer

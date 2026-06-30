@@ -73,7 +73,8 @@ Unity Code Graph는 Unity 프로젝트나 일반 C# 폴더를 스캔해서 `.cs`
 | Unity 패턴 | `GetComponent<T>()`, `AddComponent<T>()`, `FindObjectOfType<T>()`, `CreateInstance<T>()` |
 | 호출 그래프 | 문법상 해석 가능한 메서드 호출과 타입 간 호출 요약 |
 | 웹 뷰어 | 시스템 클러스터, 시스템 리포트, 플로우 트레이스, Code Calls, 자동 리로드, 첫 실행 안내, AI 컨텍스트 MD/JSON export |
-| AI 보조 | 노드 요약, 시스템 요약, 코드 읽기 워크스루, 근거 edge 표시, 워크스루 칩으로 그래프 점프 |
+| AI 컨텍스트 | 그래프 생성 시 `ai-context/index.md`, `systems/*.md`, `*.json` 자동 생성 |
+| AI 보조 | 노드 요약, 시스템 요약, 코드 읽기 워크스루, AI 컨텍스트 보강, 근거 edge 표시, 워크스루 칩으로 그래프 점프 |
 | 레이아웃 | 노드 위치 저장, `Export Layout`, `Import Layout` |
 | 런처 | WebView2 GUI, 최근 프로젝트, watch 모드, 내장 로컬 서버, AI provider 프록시 |
 
@@ -100,6 +101,11 @@ Unity 프로젝트에서 그래프 생성:
 ```powershell
 dotnet run --project .\UnityCodeGraph -- <Unity 프로젝트 경로> --roots Scripts,Source --output graph.json
 ```
+
+그래프가 생성되면 output JSON 옆에 `ai-context` 폴더도 같이 생성됩니다.
+VS Code, Claude Code, Codex 같은 도구에서는 `ai-context/index.md`를 먼저 읽히고,
+필요한 기능별 파일은 `ai-context/systems/*.md`에서 이어서 참고시키면 됩니다.
+기존 파일이 없으면 output JSON 옆에 `AGENTS.md`와 `CLAUDE.md`도 자동 생성되어 이 폴더를 먼저 참고하도록 안내합니다.
 
 코드 폴더를 직접 지정해서 생성:
 
@@ -187,6 +193,8 @@ AI 기능은 선택 사항입니다. API 키가 없거나 요청이 실패해도
 3. `Remember API key on this Windows user profile`을 켜고 `Save AI`를 누르면 API key가 현재 Windows 사용자 프로필에 저장됩니다.
 4. 노드나 좌측 `SYSTEMS`의 시스템을 선택한 뒤 `AI Walkthrough`를 실행합니다.
 5. 워크스루 패널의 `Reading Path` 아래 파란 칩을 누르면 해당 노드나 edge로 그래프가 이동하고 하이라이트됩니다.
+6. 런처에서 `All Context`, `Index Only`, `Single System` 범위를 고른 뒤 `Enhance AI Context`를 누르면 기존 `ai-context`를 바탕으로 `ai-context-enhanced` Markdown 문서를 생성합니다.
+   보강 문서 상단에는 원본 Markdown과 JSON 근거 링크가 표시됩니다.
 
 지원 provider:
 

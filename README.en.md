@@ -72,7 +72,8 @@ already extracted graph data.
 | Unity patterns | `GetComponent<T>()`, `AddComponent<T>()`, `FindObjectOfType<T>()`, `CreateInstance<T>()` |
 | Call graph | Syntax-resolved method calls and type-level call summaries |
 | Web viewer | System clusters, system reports, flow traces, Code Calls, auto reload, first-run guidance, AI context Markdown/JSON export |
-| AI assistant | Node summaries, system summaries, code reading walkthroughs, evidence edges, graph-jump chips |
+| AI context | Automatically writes `ai-context/index.md`, `systems/*.md`, and `*.json` next to the generated graph |
+| AI assistant | Node summaries, system summaries, code reading walkthroughs, AI context enhancement, evidence edges, graph-jump chips |
 | Layout | Saved positions, `Export Layout`, `Import Layout` |
 | Launcher | WebView2 GUI, recent projects, watch mode, built-in local server, AI provider proxy |
 
@@ -101,6 +102,13 @@ Generate a graph from a Unity project:
 ```powershell
 dotnet run --project .\UnityCodeGraph -- <path-to-unity-project> --roots Scripts,Source --output graph.json
 ```
+
+When the graph is generated, an `ai-context` folder is written next to the output
+JSON. In VS Code, Claude Code, Codex, or similar tools, start with
+`ai-context/index.md`, then attach the relevant `ai-context/systems/*.md` file
+for focused feature context.
+If they do not already exist, `AGENTS.md` and `CLAUDE.md` are also written next
+to the output JSON and point agents to this folder.
 
 Generate from a direct code folder:
 
@@ -189,6 +197,10 @@ How to use it:
    `AI Walkthrough`.
 5. In the walkthrough panel, click the blue chips under `Reading Path` to jump
    to the referenced node or edge on the graph.
+6. Choose `All Context`, `Index Only`, or `Single System` in the launcher, then
+   click `Enhance AI Context` to create AI-rewritten Markdown under
+   `ai-context-enhanced` from the generated `ai-context` files. Enhanced files
+   include links back to the source Markdown and JSON evidence.
 
 Supported providers:
 

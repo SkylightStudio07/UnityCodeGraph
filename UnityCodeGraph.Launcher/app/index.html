@@ -101,9 +101,25 @@
             <div id="recentList" class="recent-list"></div>
           </div>
 
+          <div class="enhance-options">
+            <label>
+              <span>AI Context Scope</span>
+              <select id="enhanceScope">
+                <option value="all">All Context</option>
+                <option value="index">Index Only</option>
+                <option value="system">Single System</option>
+              </select>
+            </label>
+            <label>
+              <span>System File</span>
+              <input id="enhanceSystem" placeholder="Used only for Single System" />
+            </label>
+          </div>
+
           <div class="actions">
             <button id="generate" class="primary">Generate Once</button>
             <button id="watch" class="success">Start Watch</button>
+            <button id="enhanceContext" class="ai-action">Enhance AI Context</button>
             <button id="stop" class="danger" disabled>Stop</button>
           </div>
         </div>

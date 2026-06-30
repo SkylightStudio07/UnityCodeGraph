@@ -615,7 +615,8 @@ label span,
   font-weight: 700;
 }
 
-input {
+input,
+select {
   width: 100%;
   height: 40px;
   border: 1px solid var(--ink);
@@ -626,7 +627,12 @@ input {
   background: rgba(255, 255, 255, 0.8);
 }
 
-input:focus {
+select {
+  font-weight: 800;
+}
+
+input:focus,
+select:focus {
   border-color: var(--blue-strong);
   box-shadow: 0 0 0 3px rgba(141, 204, 255, 0.55);
 }
@@ -657,7 +663,8 @@ button:disabled {
 
 .primary,
 .success,
-.danger {
+.danger,
+.ai-action {
   color: var(--ink);
 }
 
@@ -673,10 +680,21 @@ button:disabled {
   background: var(--rose);
 }
 
+.ai-action {
+  background: var(--blue);
+}
+
 .actions {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.enhance-options {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.6fr) minmax(260px, 1fr);
+  gap: 12px;
+  margin: 12px 0 4px;
 }
 
 .log-head {
